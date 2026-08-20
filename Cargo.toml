@@ -1,0 +1,23 @@
+[package]
+name = "xiaomi-remote-pro2-gateway"
+version = "0.1.0"
+edition = "2021"
+description = "Xiaomi Bluetooth Remote 2 Pro (RC003/ARN9) Rust Gateway: Key Logging, Voice Recording & Status Display"
+authors = ["Xiaomi Remote Pro2 Gateway Contributors"]
+license = "GPL-3.0"
+
+[dependencies]
+anyhow = "1"
+bluest = "0.6"
+clap = { version = "4", features = ["derive"] }
+chrono = "0.4"
+env_logger = "0.11"
+futures-lite = "2"
+hound = "3.5"
+log = "0.4"
+tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
+uuid = "1"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+evdev = { version = "0.13", features = ["tokio"] }
