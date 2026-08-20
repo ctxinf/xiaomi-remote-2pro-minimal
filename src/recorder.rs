@@ -27,6 +27,8 @@ pub struct AutoWavRecorder {
     start_time: Option<Instant>,
     max_peak: i16,
     sum_squared: f64,
+    /// Number of sessions already recorded, used to keep `--wav` takes distinct.
+    session_count: u32,
 }
 
 impl AutoWavRecorder {
@@ -40,18 +42,44 @@ impl AutoWavRecorder {
             start_time: None,
             max_peak: 0,
             sum_squared: 0.0,
+            session_count: 0,
         }
     }
 
     fn open_writer(&mut self) -> anyhow::Result<()> {
-        let path = if let Some(ref p) = self.fixed_path {
-            p.clone()
-        } else {
-            if !self.record_dir.exists() {
-                fs::create_dir_all(&self.record_dir)?;
+        let path = match self.fixed_path {
+            // A fixed --wav path is reused for every voice session, so the first
+            // session's file would be truncated by the second. Suffix all but the
+            // first session to keep each take.
+            Some(ref p) => {
+                let path = if self.session_count == 0 {
+                    p.clone()
+                } else {
+                    let stem = p.file_stem().map(|s| s.to_string_lossy().into_owned());
+                    let ext = p.extension().map(|s| s.to_string_lossy().into_owned());
+                    let name = match (stem, ext) {
+                        (Some(stem), Some(ext)) => {
+                            format!("{stem}_{:03}.{ext}", self.session_count)
+                        }
+                        (Some(stem), None) => format!("{stem}_{:03}", self.session_count),
+                        _ => format!("record_{:03}.wav", self.session_count),
+                    };
+                    p.with_file_name(name)
+                };
+                if let Some(parent) = path.parent() {
+                    if !parent.as_os_str().is_empty() && !parent.exists() {
+                        fs::create_dir_all(parent)?;
+                    }
+                }
+                path
             }
-            let timestamp = Local::now().format("%Y%m%d_%H%M%S%.3f");
-            self.record_dir.join(format!("record_{}.wav", timestamp))
+            None => {
+                if !self.record_dir.exists() {
+                    fs::create_dir_all(&self.record_dir)?;
+                }
+                let timestamp = Local::now().format("%Y%m%d_%H%M%S%.3f");
+                self.record_dir.join(format!("record_{}.wav", timestamp))
+            }
         };
 
         let spec = hound::WavSpec {
@@ -71,6 +99,7 @@ impl AutoWavRecorder {
 
         self.current_writer = Some(writer);
         self.current_file_path = Some(path);
+        self.session_count = self.session_count.saturating_add(1);
         self.total_samples = 0;
         self.start_time = Some(Instant::now());
         self.max_peak = 0;

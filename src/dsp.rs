@@ -24,6 +24,14 @@ impl FrameAccumulator {
         self.pending.drain(..complete * frame_size);
     }
 
+    /// Takes any buffered bytes that never formed a complete frame.
+    ///
+    /// The remote stops mid-frame when the mic button is released, so the tail of
+    /// every recording sits here; decoding it recovers up to one frame of audio.
+    pub fn take_partial(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.pending)
+    }
+
     pub fn reset(&mut self) {
         self.pending.clear();
     }

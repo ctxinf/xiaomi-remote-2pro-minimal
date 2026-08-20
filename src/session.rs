@@ -157,7 +157,7 @@ impl AtvvSession {
     }
 
     pub fn handle_audio(&mut self, data: &[u8], now_ms: u64, actions: &mut Vec<Action>) {
-        if !self.caps_confirmed {
+        if !self.caps_confirmed || data.is_empty() {
             return;
         }
         if !self.streaming {
@@ -198,7 +198,28 @@ impl AtvvSession {
     pub fn finish(&mut self, actions: &mut Vec<Action>) {
         if self.streaming {
             self.streaming = false;
+            self.flush_partial(actions);
             actions.push(Action::StreamStopped);
+        }
+    }
+
+    /// Decodes the trailing partial ADPCM frame, if any, before the stream ends.
+    ///
+    /// The remote cuts the stream mid-frame on mic release; without this the last
+    /// (up to `frame_size - 1`) bytes of every take would be dropped.
+    fn flush_partial(&mut self, actions: &mut Vec<Action>) {
+        let partial = self.frames.take_partial();
+        if partial.is_empty() {
+            return;
+        }
+        if let Some((predictor, step_index)) = self.pending_sync.take() {
+            self.decoder.reset(predictor as i32, step_index as i32);
+        }
+        let mut samples = Vec::with_capacity(partial.len() * 2);
+        self.decoder.decode_into(&partial, &mut samples);
+        postprocess(&mut samples, self.gain_db);
+        if !samples.is_empty() {
+            actions.push(Action::Pcm(samples));
         }
     }
 
@@ -218,6 +239,7 @@ impl AtvvSession {
             return;
         }
         self.streaming = false;
+        self.flush_partial(actions);
         self.frames.reset();
         self.pending_sync = None;
         self.last_stop_ms = Some(now_ms);

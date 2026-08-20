@@ -105,3 +105,78 @@ fn test_wav_recorder() {
     // Clean up
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn test_fixed_wav_sessions_do_not_overwrite() {
+    let dir = std::env::temp_dir().join("gateway_test_fixed_wav");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let fixed = dir.join("take.wav");
+
+    let mut recorder = AutoWavRecorder::new(dir.clone(), Some(fixed.clone()));
+    recorder.on_stream_start();
+    recorder.push(&[1000i16; 800]);
+    recorder.on_stream_stop();
+    let first_len = std::fs::metadata(&fixed).unwrap().len();
+
+    // A second voice session must not truncate the first take.
+    recorder.on_stream_start();
+    recorder.push(&[1000i16; 10]);
+    recorder.on_stream_stop();
+
+    assert_eq!(std::fs::metadata(&fixed).unwrap().len(), first_len);
+    assert!(dir.join("take_001.wav").exists(), "second take should get its own file");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_trailing_partial_frame_is_flushed_on_stop() {
+    // frame_size = 120 bytes; feed 100 so nothing forms a complete frame.
+    let mut s = AtvvSession::new(0.0);
+    let mut actions = Vec::new();
+    s.handle_control(&[0x0B, 0x01, 0x00, 0x02, 0x03, 0x00, 0x78], 0, &mut actions);
+    s.handle_control(&[0x04, 0x00, 0x02, 0x01], 10, &mut actions);
+    actions.clear();
+
+    s.handle_audio(&[0x11; 100], 20, &mut actions);
+    assert!(actions.is_empty(), "partial frame should not emit yet");
+
+    s.handle_control(&[0x00], 30, &mut actions);
+    match actions.as_slice() {
+        [Action::Pcm(samples), Action::StreamStopped] => {
+            assert_eq!(samples.len(), 200, "100 bytes -> 200 PCM samples");
+        }
+        other => panic!("expected flushed tail then stop, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_finish_flushes_partial_frame() {
+    let mut s = AtvvSession::new(0.0);
+    let mut actions = Vec::new();
+    s.handle_control(&[0x0B, 0x01, 0x00, 0x02, 0x03, 0x00, 0x78], 0, &mut actions);
+    s.handle_control(&[0x04, 0x00, 0x02, 0x01], 10, &mut actions);
+    actions.clear();
+
+    s.handle_audio(&[0x11; 60], 20, &mut actions);
+    actions.clear();
+
+    s.finish(&mut actions);
+    match actions.as_slice() {
+        [Action::Pcm(samples), Action::StreamStopped] => assert_eq!(samples.len(), 120),
+        other => panic!("expected flushed tail then stop, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_empty_audio_packet_does_not_start_stream() {
+    let mut s = AtvvSession::new(0.0);
+    let mut actions = Vec::new();
+    s.handle_control(&[0x0B, 0x01, 0x00, 0x02, 0x03, 0x00, 0x01], 0, &mut actions);
+    actions.clear();
+
+    s.handle_audio(&[], 100, &mut actions);
+    assert!(actions.is_empty(), "empty notification must not open a stream");
+    assert!(!s.is_streaming());
+}

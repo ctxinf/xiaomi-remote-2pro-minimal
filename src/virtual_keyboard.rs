@@ -45,6 +45,7 @@ mod linux_impl {
             self.device.is_some()
         }
 
+
         pub fn emit_key(&mut self, key: KeyCode) -> anyhow::Result<()> {
             let Some(dev) = self.device.as_mut() else {
                 anyhow::bail!("/dev/uinput virtual keyboard is not available");
@@ -94,6 +95,12 @@ mod linux_impl {
         }
     }
 
+    impl Default for VirtualKeyboard {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
     pub type SharedVirtualKeyboard = Arc<Mutex<VirtualKeyboard>>;
 
     pub fn create_shared_virtual_keyboard() -> SharedVirtualKeyboard {
@@ -105,6 +112,7 @@ mod linux_impl {
 mod non_linux_impl {
     use std::sync::{Arc, Mutex};
 
+    /// Stub keyboard for non-Linux targets: always unavailable, never injects.
     pub struct VirtualKeyboard;
 
     impl VirtualKeyboard {
@@ -116,6 +124,12 @@ mod non_linux_impl {
         }
     }
 
+    impl Default for VirtualKeyboard {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
     pub type SharedVirtualKeyboard = Arc<Mutex<VirtualKeyboard>>;
 
     pub fn create_shared_virtual_keyboard() -> SharedVirtualKeyboard {
@@ -123,4 +137,8 @@ mod non_linux_impl {
     }
 }
 
+#[cfg(target_os = "linux")]
 pub use linux_impl::*;
+
+#[cfg(not(target_os = "linux"))]
+pub use non_linux_impl::*;
