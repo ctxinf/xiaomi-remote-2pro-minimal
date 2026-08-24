@@ -14,4 +14,3 @@ echo "[hook] recording started (sample_rate=${XIAOMI_SAMPLE_RATE} Hz)"
 
 # Example: desktop notification while the user is speaking.
 #   notify-send "Xiaomi Remote" "Listening..."
-`````

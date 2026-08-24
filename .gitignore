@@ -1,3 +1,9 @@
 target/
 records/
 *.wav
+__pycache__/
+
+# Hook example secrets — never commit real credentials
+.env
+**/.env
+!**/.env.example

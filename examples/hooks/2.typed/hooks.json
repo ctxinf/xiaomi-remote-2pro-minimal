@@ -1,0 +1,5 @@
+{
+  "hooks": {
+    "end": ["./2_asr_clipboard.sh"]
+  }
+}
