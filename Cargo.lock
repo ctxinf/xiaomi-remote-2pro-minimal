@@ -1595,6 +1595,7 @@ dependencies = [
  "futures-lite 2.6.1",
  "hound",
  "log",
+ "serde_json",
  "tokio",
  "tokio-util",
  "uuid",

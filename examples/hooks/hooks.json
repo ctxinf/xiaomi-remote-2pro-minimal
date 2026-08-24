@@ -1,0 +1,6 @@
+{
+  "hooks": {
+    "start": "./on_start.sh",
+    "end": ["./on_end.sh"]
+  }
+}

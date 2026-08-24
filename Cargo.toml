@@ -2,7 +2,7 @@
 name = "xiaomi-remote-pro2-gateway"
 version = "0.1.0"
 edition = "2021"
-description = "Xiaomi Bluetooth Remote 2 Pro (RC003/ARN9) Rust Gateway: Key Logging, Voice Recording & Status Display"
+description = "Xiaomi Bluetooth Remote 2 Pro (RC003/ARN9) Voice Gateway: records mic audio to temp files and triggers hook scripts"
 authors = ["Xiaomi Remote Pro2 Gateway Contributors"]
 license = "GPL-3.0"
 
@@ -15,6 +15,7 @@ env_logger = "0.11"
 futures-lite = "2"
 hound = "3.5"
 log = "0.4"
+serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
 uuid = "1"

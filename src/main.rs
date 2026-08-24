@@ -1,4 +1,7 @@
 //! Xiaomi Remote Pro 2 Gateway CLI Application.
+//!
+//! Records voice from the remote's microphone button to temporary WAV files and
+//! triggers hook scripts on the `start` / `end` recording events.
 
 use anyhow::Context as _;
 use clap::{Parser, Subcommand};
@@ -11,14 +14,16 @@ use tokio_util::sync::CancellationToken;
 use xiaomi_remote_pro2_gateway::atvv;
 use xiaomi_remote_pro2_gateway::ble_bridge::{self, BridgeConfig};
 use xiaomi_remote_pro2_gateway::bluest::Adapter;
-use xiaomi_remote_pro2_gateway::key_monitor;
-use xiaomi_remote_pro2_gateway::recorder::AutoWavRecorder;
+use xiaomi_remote_pro2_gateway::hooks::{HookConfig, HookEvent};
+use xiaomi_remote_pro2_gateway::recorder::{default_tmp_dir, WavRecorder};
+use xiaomi_remote_pro2_gateway::retention::RetentionPolicy;
+use xiaomi_remote_pro2_gateway::voice_key;
 
 #[derive(Parser, Debug)]
 #[command(
     name = "xiaomi-remote-gateway",
     version,
-    about = "Xiaomi Bluetooth Remote 2 Pro (RC003/ARN9) Gateway: Key Logging, Voice Recording & Status Display"
+    about = "Xiaomi Bluetooth Remote 2 Pro (RC003/ARN9) Voice Gateway: records mic audio and triggers hooks"
 )]
 struct Cli {
     /// Enable verbose debug logging
@@ -28,13 +33,18 @@ struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
 
-    /// Directory to store recorded audio WAV files
-    #[arg(long, default_value = "./records", global = true)]
-    record_dir: PathBuf,
-
-    /// Fixed single WAV file path for recording (optional)
+    /// Directory for recorded audio WAV files [default: $TMPDIR/xiaomi-remote-gateway]
     #[arg(long, global = true)]
-    wav: Option<PathBuf>,
+    record_dir: Option<PathBuf>,
+
+    /// Hook script to run on an event: `end=./script.sh`, `start=./script.py`,
+    /// or a bare path (defaults to the `end` event). Repeatable.
+    #[arg(long = "hook", value_name = "[EVENT=]SCRIPT", global = true)]
+    hooks: Vec<String>,
+
+    /// JSON file declaring hooks, e.g. {"hooks":{"end":["./transcribe.py"]}}
+    #[arg(long, value_name = "FILE", global = true)]
+    hook_config: Option<PathBuf>,
 
     /// Audio digital gain in dB (-24.0 to +24.0)
     #[arg(long, default_value_t = 0.0, allow_negative_numbers = true, global = true)]
@@ -48,18 +58,26 @@ struct Cli {
     #[arg(long, global = true)]
     device_name: Option<String>,
 
-    /// Suppress remote buttons from triggering system actions (exclusive grab: blocks VSCode F5 debug, desktop volume change, etc.)
-    #[arg(long, default_value_t = true, action = clap::ArgAction::Set, global = true)]
-    grab: bool,
+    /// Delete recordings older than this many hours (0 = keep forever).
+    /// Recordings are meant to be consumed by the `end` hook; this reaps
+    /// whatever the hook left behind.
+    #[arg(long, default_value_t = 24, global = true)]
+    keep_hours: u64,
 
-    /// Disable key grabbing (allow remote buttons to pass through to system desktop and apps)
+    /// Keep at most this many recordings, newest first (0 = unlimited)
+    #[arg(long, default_value_t = 100, global = true)]
+    keep_max: usize,
+
+    /// Let the mic button reach the desktop instead of suppressing it.
+    /// By default the voice key is swallowed so it cannot trigger the VS Code
+    /// debugger (F5) or other system shortcuts while you are talking.
     #[arg(long, global = true)]
-    no_grab: bool,
+    no_suppress_voice_key: bool,
 }
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Run the full gateway: BLE Voice Audio Recorder + Button Event Monitor (Default)
+    /// Record voice from the remote and trigger hooks (default)
     Run,
     /// Scan for nearby BLE devices and identify Xiaomi remotes
     Scan {
@@ -67,15 +85,11 @@ enum Command {
         #[arg(long, default_value_t = 10)]
         seconds: u64,
     },
-    /// Run only the remote button event monitor
-    Keys,
-    /// Run only the BLE audio voice recorder
-    Record,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
 
     env_logger::Builder::new()
         .filter_level(if cli.verbose {
@@ -87,30 +101,27 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     log::info!("===========================================================");
-    log::info!("  Xiaomi Bluetooth Remote 2 Pro (RC003/ARN9) Gateway");
+    log::info!("  Xiaomi Bluetooth Remote 2 Pro (RC003/ARN9) Voice Gateway");
     log::info!("===========================================================");
 
-    let grab = if cli.no_grab { false } else { cli.grab };
-    let cmd = cli.command.unwrap_or(Command::Run);
-
-    match cmd {
+    match cli.command.take().unwrap_or(Command::Run) {
         Command::Scan { seconds } => cmd_scan(seconds).await,
-        Command::Keys => cmd_keys(grab).await,
-        Command::Record => {
-            cmd_record(cli.record_dir, cli.wav, cli.gain, cli.reconnect, cli.device_name).await
-        }
-        Command::Run => {
-            cmd_run_full(
-                cli.record_dir,
-                cli.wav,
-                cli.gain,
-                cli.reconnect,
-                cli.device_name,
-                grab,
-            )
-            .await
-        }
+        Command::Run => cmd_run(cli).await,
     }
+}
+
+/// Builds the hook set from the config file first, then the `--hook` flags, so
+/// command-line hooks run after the ones declared in the config.
+fn build_hooks(cli: &Cli) -> anyhow::Result<HookConfig> {
+    let mut hooks = match &cli.hook_config {
+        Some(path) => HookConfig::from_file(path)?,
+        None => HookConfig::new(),
+    };
+    for arg in &cli.hooks {
+        let (event, script) = HookConfig::parse_arg(arg)?;
+        hooks.add(event, script);
+    }
+    Ok(hooks)
 }
 
 async fn setup_shutdown_handler() -> CancellationToken {
@@ -118,7 +129,7 @@ async fn setup_shutdown_handler() -> CancellationToken {
     let s_clone = shutdown.clone();
     tokio::spawn(async move {
         let _ = tokio::signal::ctrl_c().await;
-        log::info!("\n[GATEWAY] Ctrl-C received, shutting down gracefully...");
+        log::info!("[GATEWAY] Ctrl-C received, shutting down gracefully...");
         s_clone.cancel();
     });
     shutdown
@@ -181,72 +192,54 @@ async fn cmd_scan(seconds: u64) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn cmd_keys(grab: bool) -> anyhow::Result<()> {
-    let shutdown = setup_shutdown_handler().await;
-    key_monitor::run_key_monitor(shutdown.clone(), grab).await;
-    Ok(())
-}
+async fn cmd_run(cli: Cli) -> anyhow::Result<()> {
+    let hooks = build_hooks(&cli)?;
+    let record_dir = cli.record_dir.clone().unwrap_or_else(default_tmp_dir);
 
-async fn cmd_record(
-    record_dir: PathBuf,
-    wav: Option<PathBuf>,
-    gain: f64,
-    reconnect: u64,
-    device_name: Option<String>,
-) -> anyhow::Result<()> {
-    let shutdown = setup_shutdown_handler().await;
-    let mut recorder = AutoWavRecorder::new(record_dir, wav);
-
-    let config = BridgeConfig {
-        gain_db: gain,
-        reconnect_delay: Duration::from_secs(reconnect.max(1)),
-        scan_timeout: Duration::from_secs(10),
-        target_name: device_name,
-    };
-
-    ble_bridge::run_ble_bridge(&mut recorder, &config, &shutdown).await
-}
-
-async fn cmd_run_full(
-    record_dir: PathBuf,
-    wav: Option<PathBuf>,
-    gain: f64,
-    reconnect: u64,
-    device_name: Option<String>,
-    grab: bool,
-) -> anyhow::Result<()> {
-    let shutdown = setup_shutdown_handler().await;
+    let retention = RetentionPolicy::from_args(cli.keep_hours, cli.keep_max);
 
     log::info!("[GATEWAY] Record directory: {}", record_dir.display());
-    if let Some(ref w) = wav {
-        log::info!("[GATEWAY] Fixed WAV output: {}", w.display());
+    log::info!("[GATEWAY] Retention: {}", retention.describe());
+    log::info!("[GATEWAY] Digital Gain: {:.1} dB", cli.gain);
+    log::info!("[GATEWAY] Reconnect delay: {}s", cli.reconnect);
+    for event in [HookEvent::Start, HookEvent::End] {
+        for script in hooks.scripts_for(event) {
+            log::info!("[GATEWAY] Hook [{event}]: {}", script.display());
+        }
     }
-    log::info!("[GATEWAY] Digital Gain: {:.1} dB", gain);
-    log::info!("[GATEWAY] Reconnect delay: {}s", reconnect);
-    log::info!(
-        "[GATEWAY] System key suppression (grab): {}",
-        if grab { "ENABLED (已屏蔽系统按键)" } else { "DISABLED (允许系统直通)" }
-    );
+    if hooks.is_empty() {
+        log::info!("[GATEWAY] No hooks configured (use --hook or --hook-config).");
+    }
 
-    // 1. Spawn Key Monitor Task
-    let key_shutdown = shutdown.clone();
-    let key_handle = tokio::spawn(async move {
-        key_monitor::run_key_monitor(key_shutdown, grab).await;
-    });
+    let shutdown = setup_shutdown_handler().await;
 
-    // 2. Run BLE Bridge Task
-    let mut recorder = AutoWavRecorder::new(record_dir, wav);
-    let config = BridgeConfig {
-        gain_db: gain,
-        reconnect_delay: Duration::from_secs(reconnect.max(1)),
-        scan_timeout: Duration::from_secs(10),
-        target_name: device_name,
+    // Swallow the mic button's HID report so it cannot double as a desktop
+    // keypress while the BLE side is recording.
+    let suppressor = if cli.no_suppress_voice_key {
+        log::info!("[GATEWAY] Voice-key suppression disabled; mic button passes through to desktop.");
+        None
+    } else {
+        let token = shutdown.clone();
+        Some(tokio::spawn(voice_key::run(token)))
     };
 
-    let ble_res = ble_bridge::run_ble_bridge(&mut recorder, &config, &shutdown).await;
+    let mut recorder = WavRecorder::new(record_dir, hooks, retention);
+    // Clear out anything previous runs left behind before recording more.
+    recorder.sweep_startup();
+    let config = BridgeConfig {
+        gain_db: cli.gain,
+        reconnect_delay: Duration::from_secs(cli.reconnect.max(1)),
+        scan_timeout: Duration::from_secs(10),
+        target_name: cli.device_name,
+    };
 
-    // Await key monitor shutdown
-    let _ = key_handle.await;
+    let result = ble_bridge::run_ble_bridge(&mut recorder, &config, &shutdown).await;
 
-    ble_res
+    // Ensure the grab is released before exiting.
+    shutdown.cancel();
+    if let Some(handle) = suppressor {
+        let _ = handle.await;
+    }
+
+    result
 }
