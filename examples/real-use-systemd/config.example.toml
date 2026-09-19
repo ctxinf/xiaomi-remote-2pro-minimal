@@ -1,0 +1,93 @@
+## Xiaomi Remote Pro 2 Gateway — real-use deployment config.
+##
+## One file drives everything: how the systemd unit is generated, and what the
+## `end` hook does with each recording (audio -> Aliyun ASR -> LLM -> clipboard).
+##
+## Installed to ~/.config/xiaomi-remote-gateway/config.toml
+## Re-run `./install-service.sh install` after editing to apply unit changes;
+## changes under [asr]/[llm]/[output]/[audio] take effect on the next recording
+## with no restart, because the hook re-reads this file every time it runs.
+##
+## NO CREDENTIALS IN THIS FILE. Write `${secret:name}` and put the value in the
+## encrypted store:
+##     ./install-service.sh secret add dashscope_api_key sk-xxxxxxxx
+
+[service]
+name = "xiaomi-remote-gateway"
+description = "Xiaomi Remote Pro 2 voice gateway (voice -> ASR -> LLM)"
+# Seconds to wait before restarting after a crash.
+restart_sec = 5
+
+[gateway]
+# "auto" finds the release build in this checkout; the installer copies it into
+# ~/.local/share/xiaomi-remote-gateway/bin so the service survives a `git clean`.
+binary = "auto"
+# Empty = $TMPDIR/xiaomi-remote-gateway.
+record_dir = ""
+gain_db = 0.0
+# Fallback retention for recordings the hook did not consume (0 = unlimited).
+keep_hours = 24
+keep_max = 100
+# Mic-key suppression. Keep "auto" if keyd (or any other remapper) already
+# grabs the remote — the gateway then leaves the input layer entirely alone
+# instead of fighting it for the exclusive EVIOCGRAB.
+#   auto   = suppress only when nothing else owns the device  (default)
+#   always = always grab; needs /dev/uinput (see scripts/setup-uinput.sh)
+#   never  = never touch the input layer
+voice_key = "auto"
+# Optional BLE name filter; empty = autodetect.
+device_name = ""
+verbose = false
+extra_args = []
+
+## --- Step 1: speech to text ------------------------------------------------
+## Aliyun DashScope (百炼) in OpenAI-compatible mode. The WAV goes up as a
+## base64 `input_audio` part; the model answers with the transcript.
+[asr]
+base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+model = "qwen3-asr-flash"
+api_key = "${secret:dashscope_api_key}"
+# Bare language code. "zh-CN" is rejected by the API; "" lets it autodetect.
+language = "zh"
+timeout_sec = 60
+max_audio_bytes = 8388608
+
+## --- Step 2: transcript post-processing ------------------------------------
+## Any OpenAI-compatible endpoint (DashScope, OpenAI, a local vLLM/Ollama...).
+## Set enabled = false to put the raw transcript straight on the clipboard.
+[llm]
+enabled = true
+base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+model = "qwen-flash"
+api_key = "${secret:llm_api_key}"
+temperature = 0.2
+timeout_sec = 60
+max_input_chars = 4000
+system_prompt = """
+你是语音转写的后处理器。输入是一段中文语音识别结果，可能有口癖、重复、缺标点。
+请输出清理后的文本：补全标点、去掉"嗯/那个/就是"之类的口水词、修正明显的同音错别字。
+不要翻译、不要扩写、不要总结、不要添加任何解释或前后缀，只输出清理后的正文。
+"""
+
+## --- Step 3: where the text goes -------------------------------------------
+[output]
+# "llm" uses the post-processed text (falling back to the raw transcript if
+# step 2 is disabled or failed); "asr" always uses the raw transcript.
+use = "llm"
+clipboard = true
+notify = true
+# Append every result as JSON Lines; "" disables the log.
+# This is the only file here that would otherwise grow forever (recordings are
+# reaped by keep_hours/keep_max, and the service log is vacuumed by journald),
+# so it is rotated at max_bytes, keeping one previous generation as ".jsonl.1".
+transcript_log = ""
+transcript_log_max_bytes = 1048576
+# Optional extra command; the text arrives on its stdin, never as an argument.
+# command = ["/home/you/bin/handle-voice.sh"]
+command = []
+
+[audio]
+# Delete the WAV once it has been transcribed. Failed runs always keep theirs.
+delete_after = true
+# Ignore recordings shorter than this (the gateway already drops sub-50ms ones).
+min_duration_sec = 0.3

@@ -68,11 +68,37 @@ struct Cli {
     #[arg(long, default_value_t = 100, global = true)]
     keep_max: usize,
 
-    /// Let the mic button reach the desktop instead of suppressing it.
-    /// By default the voice key is swallowed so it cannot trigger the VS Code
-    /// debugger (F5) or other system shortcuts while you are talking.
-    #[arg(long, global = true)]
+    /// Mic-button suppression: `auto` (default) grabs the remote only when no
+    /// key remapper such as keyd already owns it, `always` forces the grab,
+    /// `never` leaves the input layer alone.
+    #[arg(
+        long = "voice-key",
+        value_name = "auto|always|never",
+        default_value = "auto",
+        global = true
+    )]
+    voice_key: String,
+
+    /// Deprecated alias for `--voice-key never`.
+    #[arg(long, global = true, hide = true)]
     no_suppress_voice_key: bool,
+}
+
+impl Cli {
+    /// Resolves the suppression mode, honouring the deprecated flag.
+    fn voice_key_mode(&self) -> anyhow::Result<voice_key::Mode> {
+        let mode = voice_key::Mode::parse(&self.voice_key).with_context(|| {
+            format!(
+                "invalid --voice-key value {:?} (expected auto, always, or never)",
+                self.voice_key
+            )
+        })?;
+        if self.no_suppress_voice_key {
+            log::warn!("[GATEWAY] --no-suppress-voice-key is deprecated; use --voice-key never.");
+            return Ok(voice_key::Mode::Never);
+        }
+        Ok(mode)
+    }
 }
 
 #[derive(Subcommand, Debug)]
@@ -194,6 +220,7 @@ async fn cmd_scan(seconds: u64) -> anyhow::Result<()> {
 
 async fn cmd_run(cli: Cli) -> anyhow::Result<()> {
     let hooks = build_hooks(&cli)?;
+    let voice_key_mode = cli.voice_key_mode()?;
     let record_dir = cli.record_dir.clone().unwrap_or_else(default_tmp_dir);
 
     let retention = RetentionPolicy::from_args(cli.keep_hours, cli.keep_max);
@@ -202,6 +229,7 @@ async fn cmd_run(cli: Cli) -> anyhow::Result<()> {
     log::info!("[GATEWAY] Retention: {}", retention.describe());
     log::info!("[GATEWAY] Digital Gain: {:.1} dB", cli.gain);
     log::info!("[GATEWAY] Reconnect delay: {}s", cli.reconnect);
+    log::info!("[GATEWAY] Mic-key suppression: {voice_key_mode}");
     for event in [HookEvent::Start, HookEvent::End] {
         for script in hooks.scripts_for(event) {
             log::info!("[GATEWAY] Hook [{event}]: {}", script.display());
@@ -214,14 +242,9 @@ async fn cmd_run(cli: Cli) -> anyhow::Result<()> {
     let shutdown = setup_shutdown_handler().await;
 
     // Swallow the mic button's HID report so it cannot double as a desktop
-    // keypress while the BLE side is recording.
-    let suppressor = if cli.no_suppress_voice_key {
-        log::info!("[GATEWAY] Voice-key suppression disabled; mic button passes through to desktop.");
-        None
-    } else {
-        let token = shutdown.clone();
-        Some(tokio::spawn(voice_key::run(token)))
-    };
+    // keypress while the BLE side is recording. In `auto` this yields to keyd
+    // and friends rather than fighting them for the exclusive grab.
+    let suppressor = tokio::spawn(voice_key::run(shutdown.clone(), voice_key_mode));
 
     let mut recorder = WavRecorder::new(record_dir, hooks, retention);
     // Clear out anything previous runs left behind before recording more.
@@ -237,9 +260,7 @@ async fn cmd_run(cli: Cli) -> anyhow::Result<()> {
 
     // Ensure the grab is released before exiting.
     shutdown.cancel();
-    if let Some(handle) = suppressor {
-        let _ = handle.await;
-    }
+    let _ = suppressor.await;
 
     result
 }
