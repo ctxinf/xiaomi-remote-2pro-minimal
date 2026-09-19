@@ -36,7 +36,7 @@ from common import (  # noqa: E402
 )
 
 UNIT_DIR = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "systemd/user"
-HOOK_FILES = ("pipeline.py", "common.py")
+HOOK_FILES = ("pipeline.py", "on_record.py", "common.py")
 
 
 def say(msg: str) -> None:
@@ -186,7 +186,8 @@ def cmd_install(args: argparse.Namespace) -> int:
             changed.append(name)
     if write_if_changed(
         INSTALL_HOOK_DIR / "hooks.json",
-        json.dumps({"hooks": {"end": ["./pipeline.py"]}}, indent=2) + "\n",
+        json.dumps({"hooks": {"start": ["./on_record.py"],
+                              "end": ["./pipeline.py"]}}, indent=2) + "\n",
     ):
         changed.append("hooks.json")
 
@@ -197,7 +198,8 @@ def cmd_install(args: argparse.Namespace) -> int:
         changed.append(unit_name)
 
     say(f"==> binary : {binary}")
-    say(f"==> hook   : {INSTALL_HOOK_DIR / 'pipeline.py'}")
+    say(f"==> hooks  : {INSTALL_HOOK_DIR / 'on_record.py'} (start)")
+    say(f"             {INSTALL_HOOK_DIR / 'pipeline.py'} (end)")
     say(f"==> config : {CONFIG_PATH}")
     say(f"==> unit   : {unit_path}")
     say(f"==> changed: {', '.join(changed) if changed else 'nothing (already up to date)'}")

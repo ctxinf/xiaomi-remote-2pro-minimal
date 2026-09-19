@@ -33,25 +33,14 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import Config, Fail, load_config, log  # noqa: E402
+from common import (  # noqa: E402
+    Config, Fail, Indicator, announce, load_config, log, notify,
+)
 
 
 # ---------------------------------------------------------------------------
 # Desktop output
 # ---------------------------------------------------------------------------
-
-
-def notify(cfg: Config, title: str, body: str) -> None:
-    if not cfg.get("output", "notify", True):
-        return
-    try:
-        subprocess.run(
-            ["notify-send", "--app-name=Xiaomi Remote",
-             "--icon=microphone-sensitivity-high", "--expire-time=5000", title, body],
-            check=False, capture_output=True, timeout=5,
-        )
-    except (FileNotFoundError, subprocess.SubprocessError):
-        pass  # A desktop-less session is a fine place to run this.
 
 
 def to_clipboard(text: str) -> bool:
@@ -206,21 +195,22 @@ def rotate(path: Path, max_bytes: int) -> None:
         log(f"[log] could not rotate {path}: {e}")
 
 
-def deliver(cfg: Config, transcript: str, final: str) -> None:
+def deliver(cfg: Config, ind: Indicator, transcript: str, final: str) -> None:
     out = cfg.section("output")
     text = final if out.get("use", "llm") == "llm" and final else transcript
 
     if out.get("clipboard", True) and to_clipboard(text):
         log(f"[out] copied {len(text)} chars to clipboard — press Ctrl+V")
-        notify(cfg, "已复制到剪贴板，按 Ctrl+V 粘贴", text)
+        announce(cfg, ind, "success", "已复制到剪贴板，按 Ctrl+V 粘贴",
+                 f"识别文本：{text}")
     else:
-        notify(cfg, "识别完成", text)
+        announce(cfg, ind, "success", "识别完成", f"识别文本：{text}")
 
-    log_path = out.get("transcript_log")
+    log_path = cfg.get("output.transcript", "log")
     if log_path:
         path = Path(log_path).expanduser()
         path.parent.mkdir(parents=True, exist_ok=True)
-        rotate(path, int(out.get("transcript_log_max_bytes", 1 << 20)))
+        rotate(path, int(cfg.get("output.transcript", "max_bytes", 1 << 20)))
         record = {
             "time": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
             "duration_sec": float(os.environ.get("XIAOMI_DURATION_SEC", 0) or 0),
@@ -245,7 +235,7 @@ def deliver(cfg: Config, transcript: str, final: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def run(audio: Path, cfg: Config) -> int:
+def run(audio: Path, cfg: Config, ind: Indicator) -> int:
     if cfg.missing_secrets:
         raise Fail("missing secrets: " + ", ".join(sorted(set(cfg.missing_secrets)))
                    + "\n  add them with:  ./install-service.sh secret add <name> <value>")
@@ -254,26 +244,39 @@ def run(audio: Path, cfg: Config) -> int:
     min_duration = float(cfg.get("audio", "min_duration_sec", 0.0))
     if duration and duration < min_duration:
         log(f"[skip] {duration:.2f}s shorter than min_duration_sec={min_duration}")
+        # The `start` hook's "正在录音…" is still up and nothing is going to
+        # replace it; take it down rather than leave it running out its ttl
+        # over an utterance that was dropped.
+        ind.hide()
         return 0
+
+    # Step 2: the key is up and the wait is now the network's fault. Each step
+    # gets its own ttl rather than one global ceiling, so a hang shows up as a
+    # popup that expires roughly when the step it names gives up.
+    ind.progress("识别中…", stage="working",
+                 ttl_sec=int(float(cfg.get("asr", "timeout_sec", 60))) + 15)
 
     transcript = transcribe(cfg, audio)
     if not transcript:
         log("[asr] empty transcript")
-        notify(cfg, "识别为空", "没有识别到文字")
+        announce(cfg, ind, "warn", "识别为空", "没有识别到文字")
         return 0
     log(f"[asr] {transcript}")
 
     final = ""
     if cfg.get("llm", "enabled", True):
+        # Same popup again — and now there is a real transcript to show, so
+        # the remaining wait doubles as a preview of the result.
+        ind.progress(f"后处理中…\n{transcript}", stage="working",
+                     ttl_sec=int(float(cfg.get("llm", "timeout_sec", 60))) + 15)
         try:
             final = postprocess(cfg, transcript)
             log(f"[llm] {final}")
         except Fail as e:
             # Degrade to the raw transcript rather than dropping the utterance.
             log(f"[llm] skipped: {e}")
-            notify(cfg, "后处理失败，使用原始转写", str(e))
 
-    deliver(cfg, transcript, final)
+    deliver(cfg, ind, transcript, final)
     return 0
 
 
@@ -303,18 +306,30 @@ def main() -> int:
     if len(sys.argv) > 1:
         audio_path = sys.argv[1]  # manual run: pipeline.py some.wav
 
-    audio = Path(audio_path)
-    if not audio_path or not audio.is_file():
-        log(f"[error] no audio file (XIAOMI_AUDIO_FILE={audio_path!r})")
-        return 1
-
+    # Config first, audio second: the `start` hook has left "正在录音…" on
+    # screen, and even the "there is no audio file" path needs an Indicator to
+    # replace it with the bad news.
     cfg: Config | None = None
+    ind: Indicator | None = None
     try:
         cfg = load_config()
-        code = run(audio, cfg)
+        ind = Indicator(cfg)
+        # The key is up: this process owns the popup from here on, and any
+        # still-in-flight call from the `start` hook is now void.
+        ind.claim()
+
+        audio = Path(audio_path)
+        if not audio_path or not audio.is_file():
+            raise Fail(f"no audio file (XIAOMI_AUDIO_FILE={audio_path!r})")
+
+        code = run(audio, cfg, ind)
     except Fail as e:
         log(f"[error] {e}")
-        if cfg is not None:
+        if cfg is not None and ind is not None:
+            # Turns whichever popup is in flight red in place, rather than
+            # leaving it spinning until its ttl.
+            announce(cfg, ind, "error", "语音处理失败", str(e))
+        elif cfg is not None:
             notify(cfg, "语音处理失败", str(e))
         # A failed run keeps its audio: it is the only copy, and it is what you
         # need to reproduce the failure by hand.
