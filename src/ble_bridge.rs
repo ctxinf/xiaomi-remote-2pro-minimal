@@ -36,6 +36,9 @@ pub fn advertisement_is_candidate(adv: &AdvertisingDevice) -> bool {
         .unwrap_or(false)
 }
 
+/// Time to let BlueZ actually stop discovery after the scan stream is dropped.
+const SCAN_SETTLE_DELAY: Duration = Duration::from_millis(500);
+
 #[derive(Debug, Clone)]
 pub struct BridgeConfig {
     pub gain_db: f64,
@@ -162,7 +165,13 @@ async fn find_remote(
                         adv.device.id(),
                         adv.rssi
                     );
-                    return Ok(Some(adv.device));
+                    let device = adv.device;
+                    // Stop discovery before connecting: BlueZ aborts LE connections
+                    // (le-connection-abort-by-local) if a scan is still active, and
+                    // dropping the stream only issues StopDiscovery asynchronously.
+                    drop(scan);
+                    tokio::time::sleep(SCAN_SETTLE_DELAY).await;
+                    return Ok(Some(device));
                 }
                 Some(_) => {}
                 None => return Ok(None),
