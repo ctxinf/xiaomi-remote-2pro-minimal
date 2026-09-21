@@ -95,13 +95,17 @@ impl AtvvSession {
                     )));
                     return;
                 }
-                log::info!(
+                // The idle keep-alive re-sends GET_CAPS every minute, so only
+                // the first confirmation of a session is worth a log line.
+                let msg = format!(
                     "ATVV Capabilities Confirmed: Version={:#06X}, Codec={:#04X}, FrameSize={}B, Rate={}Hz",
-                    caps.version,
-                    caps.codec,
-                    caps.frame_size,
-                    caps.sample_rate
+                    caps.version, caps.codec, caps.frame_size, caps.sample_rate
                 );
+                if self.caps_confirmed {
+                    log::debug!("{msg} (keep-alive)");
+                } else {
+                    log::info!("{msg}");
+                }
                 self.caps = caps;
                 self.caps_confirmed = true;
             }
