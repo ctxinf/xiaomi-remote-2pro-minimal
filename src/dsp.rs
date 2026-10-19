@@ -77,7 +77,7 @@ pub fn calculate_metrics(samples: &[i16]) -> AudioMetrics {
     let mut sum_sq = 0.0f64;
     let mut peak = 0i16;
     for &s in samples {
-        let abs_val = s.abs();
+        let abs_val = s.saturating_abs();
         if abs_val > peak {
             peak = abs_val;
         }

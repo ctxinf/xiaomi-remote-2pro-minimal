@@ -32,6 +32,7 @@ pub struct AtvvSession {
     caps: Caps,
     caps_confirmed: bool,
     streaming: bool,
+    explicit_start: bool,
     mic_opened: bool,
     session_id: u8,
     last_stop_ms: Option<u64>,
@@ -47,6 +48,7 @@ impl AtvvSession {
             caps: Caps::DEFAULT,
             caps_confirmed: false,
             streaming: false,
+            explicit_start: false,
             mic_opened: false,
             session_id: 0,
             last_stop_ms: None,
@@ -114,6 +116,10 @@ impl AtvvSession {
                     log::warn!("Received START_SEARCH before capabilities confirmed");
                     return;
                 }
+                if self.mic_opened || self.streaming {
+                    log::debug!("[ATVV] Ignoring repeated START_SEARCH while microphone is open");
+                    return;
+                }
                 log::info!("[REMOTE] Voice search button pressed (START_SEARCH), sending MIC_OPEN");
                 self.mic_opened = true;
                 actions.push(Action::SendTx(atvv::mic_open(
@@ -126,6 +132,22 @@ impl AtvvSession {
                     log::warn!("Received AUDIO_START before capabilities confirmed");
                     return;
                 }
+                if self.streaming && self.explicit_start {
+                    if session_id.is_some_and(|id| id != self.session_id) {
+                        actions.push(Action::Fatal(
+                            "AUDIO_START changed session while recording".into(),
+                        ));
+                        return;
+                    }
+                    if codec.is_some_and(|value| value != self.caps.codec) {
+                        actions.push(Action::Fatal(
+                            "AUDIO_START changed codec while recording".into(),
+                        ));
+                        return;
+                    }
+                    log::debug!("[ATVV] Ignoring repeated AUDIO_START without resetting decoder");
+                    return;
+                }
                 if let Some(codec) = codec {
                     self.caps = self.caps.with_stream_codec(codec);
                 }
@@ -135,12 +157,17 @@ impl AtvvSession {
                     ));
                     return;
                 }
+                self.explicit_start = true;
+                self.mic_opened = true;
                 self.session_id = session_id.unwrap_or(0);
                 self.start_streaming(actions);
             }
             ControlEvent::AudioStop => {
-                log::info!("[REMOTE] Voice stream stop received (AUDIO_STOP)");
+                log::debug!("[REMOTE] Voice stream stop received (AUDIO_STOP)");
                 self.stop_streaming(now_ms, actions);
+                if let Some(close) = self.take_mic_close() {
+                    actions.push(Action::SendTx(close));
+                }
             }
             ControlEvent::AudioSync {
                 predictor,
@@ -216,6 +243,7 @@ impl AtvvSession {
     pub fn finish(&mut self, actions: &mut Vec<Action>) {
         if self.streaming {
             self.streaming = false;
+            self.explicit_start = false;
             self.flush_partial(actions);
             actions.push(Action::StreamStopped);
         }
@@ -242,6 +270,10 @@ impl AtvvSession {
     }
 
     fn start_streaming(&mut self, actions: &mut Vec<Action>) {
+        if self.streaming {
+            return;
+        }
+        self.mic_opened = true;
         self.frames.reset();
         self.pending_sync = None;
         self.decoder.reset(0, 0);
@@ -257,6 +289,7 @@ impl AtvvSession {
             return;
         }
         self.streaming = false;
+        self.explicit_start = false;
         self.flush_partial(actions);
         self.frames.reset();
         self.pending_sync = None;
@@ -300,7 +333,10 @@ mod tests {
 
         // 5. Audio Stop
         s.handle_control(&[0x00], 40, &mut actions);
-        assert_eq!(actions, vec![Action::StreamStopped]);
+        assert_eq!(
+            actions,
+            vec![Action::StreamStopped, Action::SendTx(vec![0x0D, 1])]
+        );
         assert!(!s.is_streaming());
     }
 }

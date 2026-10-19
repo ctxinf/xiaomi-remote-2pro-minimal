@@ -87,7 +87,7 @@ fn test_session_state_machine() {
 
     // Audio Stop
     s.handle_control(&[0x00], 40, &mut actions);
-    assert_eq!(actions, vec![Action::StreamStopped]);
+    assert_eq!(actions, vec![Action::StreamStopped, Action::SendTx(vec![0x0D, 1])]);
     assert!(!s.is_streaming());
 }
 
@@ -363,7 +363,8 @@ fn test_trailing_partial_frame_is_flushed_on_stop() {
 
     s.handle_control(&[0x00], 30, &mut actions);
     match actions.as_slice() {
-        [Action::Pcm(samples), Action::StreamStopped] => {
+        [Action::Pcm(samples), Action::StreamStopped, Action::SendTx(close)] => {
+            assert_eq!(close, &[0x0D, 1]);
             assert_eq!(samples.len(), 200, "100 bytes -> 200 PCM samples");
         }
         other => panic!("expected flushed tail then stop, got {other:?}"),
@@ -494,4 +495,58 @@ fn test_short_take_file_is_discarded() {
     assert_eq!(wavs, 0, "no hook can ever claim a short take, so it must be removed");
 
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+
+#[test]
+fn repeated_start_does_not_reset_decoder_or_lose_partial_audio() {
+    let mut baseline = AtvvSession::new(0.0);
+    let mut repeated = AtvvSession::new(0.0);
+    let mut expected = Vec::new();
+    let mut actual = Vec::new();
+    for session in [&mut baseline, &mut repeated] {
+        let mut setup = Vec::new();
+        session.handle_control(&[0x0B, 1, 0, 2, 3, 0, 120], 0, &mut setup);
+        session.handle_control(&[0x04, 0, 2, 1], 1, &mut setup);
+    }
+    baseline.handle_audio(&[0x77; 125], 2, &mut expected);
+    repeated.handle_audio(&[0x77; 125], 2, &mut actual);
+    repeated.handle_control(&[0x04, 0, 2, 1], 3, &mut actual);
+    baseline.handle_audio(&[0x11; 115], 4, &mut expected);
+    repeated.handle_audio(&[0x11; 115], 4, &mut actual);
+    baseline.handle_control(&[0], 5, &mut expected);
+    repeated.handle_control(&[0], 5, &mut actual);
+    assert_eq!(
+        actual, expected,
+        "repeated start must preserve ADPCM state and pending frame"
+    );
+    actual.clear();
+    repeated.handle_control(&[0], 6, &mut actual);
+    assert!(
+        actual.is_empty(),
+        "repeated stop must not emit another MIC_CLOSE"
+    );
+}
+
+#[test]
+fn explicit_start_after_implicit_audio_preserves_decoder() {
+    let mut session = AtvvSession::new(0.0);
+    let mut actions = Vec::new();
+    session.handle_control(&[0x0B, 1, 0, 2, 3, 0, 1], 0, &mut actions);
+    session.handle_audio(&[0x77], 500, &mut actions);
+    actions.clear();
+    session.handle_control(&[0x04, 0, 2, 42], 501, &mut actions);
+    assert!(actions.is_empty());
+    session.handle_audio(&[0x77], 502, &mut actions);
+    let mut decoder = ImaAdpcmDecoder::new();
+    let mut pcm = Vec::new();
+    decoder.decode_into(&[0x77, 0x77], &mut pcm);
+    assert_eq!(actions, vec![Action::Pcm(pcm[2..].to_vec())]);
+}
+
+#[test]
+fn full_negative_scale_metrics_do_not_overflow() {
+    let metrics = calculate_metrics(&[i16::MIN]);
+    assert!(metrics.peak_dbfs > -0.01);
+    assert!(metrics.rms_dbfs.abs() < 0.01);
 }

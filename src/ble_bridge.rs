@@ -16,6 +16,43 @@ use crate::atvv;
 use crate::recorder::AudioSink;
 use crate::session::{Action, AtvvSession};
 
+/// Diagnostics only: identical audio values can be valid, so never deduplicate by payload.
+#[derive(Default)]
+struct AudioRxStats {
+    packets: u64,
+    bytes: u64,
+    adjacent_equal: u64,
+    previous: Vec<u8>,
+    previous_at: Option<Instant>,
+}
+
+impl AudioRxStats {
+    fn observe(&mut self, data: &[u8]) {
+        use std::hash::{Hash, Hasher};
+        let now = Instant::now();
+        let equal = self.previous_at.is_some() && self.previous == data;
+        self.packets += 1;
+        self.bytes += data.len() as u64;
+        self.adjacent_equal += u64::from(equal);
+        if log::log_enabled!(log::Level::Trace) {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            data.hash(&mut hasher);
+            log::trace!("[BLE AUDIO] packet={} bytes={} fingerprint={:016x} same_as_previous={} gap_us={:?}",
+                self.packets, data.len(), hasher.finish(), equal,
+                self.previous_at.map(|time| now.duration_since(time).as_micros()));
+        }
+        self.previous.clear();
+        self.previous.extend_from_slice(data);
+        self.previous_at = Some(now);
+    }
+
+    fn report_and_reset(&mut self) {
+        log::debug!("[BLE AUDIO] Received {} packets / {} bytes; {} adjacent equal payloads (diagnostic only, no packets removed)",
+            self.packets, self.bytes, self.adjacent_equal);
+        *self = Self::default();
+    }
+}
+
 pub const NAME_CANDIDATES: [&str; 4] = [
     "MI RC",
     "小米蓝牙语音遥控器",
@@ -508,6 +545,11 @@ async fn connect_and_run(
 
     let tx_props = tx.properties().await.ok();
     let mut session = AtvvSession::new(config.gain_db);
+    let mut audio_stats = AudioRxStats::default();
+    log::debug!(
+        "[BLE ATVV] One CTL and one AUDIO subscription opened for {}",
+        device.id()
+    );
 
     // Send GET_CAPS
     write_tx(&tx, tx_props.as_ref(), &atvv::GET_CAPS)
@@ -604,7 +646,7 @@ async fn connect_and_run(
                     last_rx = Instant::now();
                     probe_sent = None;
                     let elapsed_ms = start_instant.elapsed().as_millis() as u64;
-                    log::trace!("[BLE ATVV] RX audio at {elapsed_ms}ms: {} bytes", data.len());
+                    audio_stats.observe(&data);
                     session.handle_audio(&data, elapsed_ms, &mut actions);
                 }
                 Some(Err(e)) => {
@@ -644,6 +686,7 @@ async fn connect_and_run(
                 Action::StreamStopped => {
                     log::info!("[BLE ATVV] Voice streaming session STOPPED.");
                     sink.on_stream_stop();
+                    audio_stats.report_and_reset();
                 }
                 Action::Fatal(reason) => {
                     fatal_err = Some(reason);
@@ -662,12 +705,10 @@ async fn connect_and_run(
     // Close out any recording in flight, whatever ended the round: a drop in
     // the middle of a voice stream must still flush the WAV and fire the `end`
     // hook rather than leave a half-written file behind.
-    session.finish(&mut actions);
-    for action in actions.drain(..) {
-        if let Action::StreamStopped = action {
-            log::info!("[BLE ATVV] Voice streaming session STOPPED (link ended mid-stream).");
-            sink.on_stream_stop();
-        }
+    finish_recording(&mut session, sink);
+
+    if audio_stats.packets > 0 {
+        audio_stats.report_and_reset();
     }
 
     // Only talk to the remote if the link is still there; on a dropped link
@@ -691,6 +732,22 @@ async fn connect_and_run(
     }
 
     Ok(ended)
+}
+
+/// Flush trailing PCM before closing the WAV, including link loss and shutdown.
+fn finish_recording(session: &mut AtvvSession, sink: &mut dyn AudioSink) {
+    let mut actions = Vec::new();
+    session.finish(&mut actions);
+    for action in actions.drain(..) {
+        match action {
+            Action::Pcm(samples) => sink.push(&samples),
+            Action::StreamStopped => {
+                log::info!("[BLE ATVV] Voice streaming session STOPPED (link ended mid-stream).");
+                sink.on_stream_stop();
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Awaits the next connection event, or parks forever when event watching is
@@ -772,6 +829,38 @@ async fn check_link_health(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn disconnect_writes_partial_pcm_before_closing_sink() {
+        #[derive(Default)]
+        struct Sink {
+            samples: usize,
+            stopped: bool,
+        }
+        impl AudioSink for Sink {
+            fn on_stream_start(&mut self) {}
+            fn push(&mut self, pcm: &[i16]) {
+                assert!(!self.stopped, "tail must be written before closing");
+                self.samples += pcm.len();
+            }
+            fn on_stream_stop(&mut self) {
+                self.stopped = true;
+            }
+        }
+        let mut session = AtvvSession::new(0.0);
+        let mut actions = Vec::new();
+        session.handle_control(&[0x0B, 1, 0, 2, 3, 0, 120], 0, &mut actions);
+        session.handle_control(&[4, 0, 2, 1], 1, &mut actions);
+        actions.clear();
+        session.handle_audio(&[0x11; 60], 2, &mut actions);
+        assert!(actions.is_empty());
+        let mut sink = Sink::default();
+        finish_recording(&mut session, &mut sink);
+        assert_eq!(sink.samples, 120);
+        assert!(sink.stopped);
+        finish_recording(&mut session, &mut sink);
+        assert_eq!(sink.samples, 120, "finish must be idempotent");
+    }
 
     #[test]
     fn backoff_grows_then_caps() {
