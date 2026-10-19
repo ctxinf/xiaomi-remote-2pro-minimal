@@ -19,6 +19,24 @@ use xiaomi_remote_pro2_gateway::recorder::{default_tmp_dir, WavRecorder};
 use xiaomi_remote_pro2_gateway::retention::RetentionPolicy;
 use xiaomi_remote_pro2_gateway::voice_key;
 
+/// env_logger serializes writes, keeping terminal and file records together.
+struct LogOutput(std::fs::File);
+
+impl std::io::Write for LogOutput {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.write_all(bytes)?;
+        // A closed terminal must not prevent logs from reaching the file.
+        let _ = std::io::stderr().write_all(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.flush()?;
+        let _ = std::io::stderr().flush();
+        Ok(())
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(
     name = "xiaomi-remote-gateway",
@@ -33,6 +51,10 @@ struct Cli {
     /// Enable all diagnostic logging (including protocol trace)
     #[arg(long = "debug", visible_alias = "verbose", short = 'v', global = true)]
     verbose: bool,
+
+    /// Append logs to a file as well as stderr
+    #[arg(long, value_name = "FILE", global = true)]
+    log_file: Option<PathBuf>,
 
     #[command(subcommand)]
     command: Option<Command>,
@@ -190,7 +212,17 @@ async fn main() -> anyhow::Result<()> {
         "gain must be between -24 and 24 dB"
     );
 
-    env_logger::Builder::new()
+    let mut logger = env_logger::Builder::new();
+    if let Some(path) = &cli.log_file {
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .with_context(|| format!("Cannot open log file {}", path.display()))?;
+        logger.target(env_logger::Target::Pipe(Box::new(LogOutput(file))));
+        logger.write_style(env_logger::WriteStyle::Never);
+    }
+    logger
         .filter_level(log::LevelFilter::Warn)
         .filter_module(
             "xiaomi_remote_pro2_gateway",
@@ -207,10 +239,17 @@ async fn main() -> anyhow::Result<()> {
     log::info!("  Xiaomi Bluetooth Remote 2 Pro (RC003/ARN9) Voice Gateway");
     log::info!("===========================================================");
 
-    match cli.command.take().unwrap_or(Command::Run) {
+    if let Some(path) = &cli.log_file {
+        log::info!("[GATEWAY] Appending logs to {}", path.display());
+    }
+    let result = match cli.command.take().unwrap_or(Command::Run) {
         Command::Scan { seconds } => cmd_scan(seconds).await,
         Command::Run => cmd_run(cli).await,
+    };
+    if let Err(error) = &result {
+        log::error!("[GATEWAY] Exiting: {error:#}");
     }
+    result
 }
 
 /// Builds the hook set from the config file first, then the `--hook` flags, so

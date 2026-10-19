@@ -44,3 +44,14 @@ JSONC 支持 `//` 和 `/* */` 注释，不支持尾逗号。不会自动读取�
 网关默认输出 INFO 及以上，底层依赖保留 WARN 及以上；`--debug` 一次开启全部级别，包括 TRACE，`-v` / `--verbose` 为兼容别名。
 日志含毫秒时间戳、级别和模块。Hook 输出会原样进入日志，请自行避免打印密钥和不希望记录的识别文本。
 排查时保存从启动、按键录音到松开后的完整日志。
+
+## 将诊断日志写入文件
+
+```bash
+./target/release/xiaomi-remote-pro2-gateway --config ./config.example.jsonc --debug --log-file ./gateway-debug.log
+```
+
+日志同时输出到终端 stderr 和指定文件；文件不存在时创建，存在时追加，父目录需已存在。
+按 Ctrl-C 结束后，可直接让代码助手读取仓库中的 `gateway-debug.log` 排查。
+文件日志不含终端颜色编码。不自动轮转，诊断完成后可自行删除。
+扫描命令的设备列表仍输出到 stdout，不属于日志。
