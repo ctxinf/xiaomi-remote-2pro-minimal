@@ -49,6 +49,7 @@ struct Take {
     samples: u64,
     peak: i16,
     sum_squared: f64,
+    started: std::time::Instant,
 }
 
 impl WavRecorder {
@@ -108,6 +109,7 @@ impl WavRecorder {
             samples: 0,
             peak: 0,
             sum_squared: 0.0,
+            started: std::time::Instant::now(),
         });
         Ok(())
     }
@@ -124,6 +126,7 @@ impl WavRecorder {
             samples,
             peak,
             sum_squared,
+            started,
         } = take;
 
         if let Err(e) = writer.finalize() {
@@ -135,6 +138,13 @@ impl WavRecorder {
         }
 
         let duration_sec = samples as f64 / SAMPLE_RATE as f64;
+        let wall_sec = started.elapsed().as_secs_f64();
+        log::debug!(
+            "[AUDIO RECORD] Timing: wall={wall_sec:.3}s audio={duration_sec:.3}s samples={samples}"
+        );
+        if duration_sec > wall_sec * 1.25 + 0.25 {
+            log::warn!("[AUDIO RECORD] Audio duration {duration_sec:.3}s exceeds elapsed recording time {wall_sec:.3}s; check for another gateway service or duplicate notifications");
+        }
         let rms = if samples > 0 {
             (sum_squared / samples as f64).sqrt()
         } else {

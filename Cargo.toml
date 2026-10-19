@@ -2,6 +2,7 @@
 name = "xiaomi-remote-pro2-gateway"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.89"
 description = "Xiaomi Bluetooth Remote 2 Pro (RC003/ARN9) Voice Gateway: records mic audio to temp files and triggers hook scripts"
 authors = ["Xiaomi Remote Pro2 Gateway Contributors"]
 license = "GPL-3.0"

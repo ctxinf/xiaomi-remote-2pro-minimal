@@ -3,6 +3,8 @@
 //! Records voice from the remote's microphone button to temporary WAV files and
 //! triggers hook scripts on the `start` / `end` recording events.
 
+mod instance_lock;
+
 use anyhow::Context as _;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use futures_lite::StreamExt;
@@ -235,6 +237,11 @@ async fn main() -> anyhow::Result<()> {
         .format_timestamp_millis()
         .init();
 
+    log::info!(
+        "[GATEWAY] Version {} pid={}",
+        env!("CARGO_PKG_VERSION"),
+        std::process::id()
+    );
     log::info!("===========================================================");
     log::info!("  Xiaomi Bluetooth Remote 2 Pro (RC003/ARN9) Voice Gateway");
     log::info!("===========================================================");
@@ -344,6 +351,7 @@ async fn cmd_scan(seconds: u64) -> anyhow::Result<()> {
 }
 
 async fn cmd_run(cli: Cli) -> anyhow::Result<()> {
+    let _instance_lock = instance_lock::acquire()?;
     let hooks = build_hooks(&cli)?;
     let voice_key_mode = cli.voice_key_mode()?;
     let record_dir = cli.record_dir.clone().unwrap_or_else(default_tmp_dir);
