@@ -5,8 +5,8 @@
 //! - `start` when the voice stream opens,
 //! - `end` when it closes **and** left a valid audio file behind.
 //!
-//! Files are never deleted by the gateway: the `end` hook owns the audio file
-//! and may move, upload, or remove it.
+//! Hooks may move, upload, or remove recordings. Short takes and older files
+//! are removed according to the gateway retention policy.
 
 use crate::dsp::calculate_metrics;
 use crate::hooks::{HookConfig, HookContext, HookEvent};
@@ -73,7 +73,10 @@ impl WavRecorder {
     fn open_take(&mut self) -> anyhow::Result<()> {
         if !self.dir.exists() {
             fs::create_dir_all(&self.dir).map_err(|e| {
-                anyhow::anyhow!("Failed to create record directory {}: {e}", self.dir.display())
+                anyhow::anyhow!(
+                    "Failed to create record directory {}: {e}",
+                    self.dir.display()
+                )
             })?;
         }
 
@@ -124,7 +127,10 @@ impl WavRecorder {
         } = take;
 
         if let Err(e) = writer.finalize() {
-            log::error!("[AUDIO RECORD] Failed to finalize WAV file {}: {e}", path.display());
+            log::error!(
+                "[AUDIO RECORD] Failed to finalize WAV file {}: {e}",
+                path.display()
+            );
             return;
         }
 
@@ -151,7 +157,10 @@ impl WavRecorder {
                 "[AUDIO RECORD] Take too short ({samples} samples), discarding and skipping \"end\" hook."
             );
             if let Err(e) = fs::remove_file(&path) {
-                log::debug!("[AUDIO RECORD] Could not remove short take {}: {e}", path.display());
+                log::debug!(
+                    "[AUDIO RECORD] Could not remove short take {}: {e}",
+                    path.display()
+                );
             }
             return;
         }

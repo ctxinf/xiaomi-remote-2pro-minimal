@@ -13,8 +13,8 @@
 //! - as `XIAOMI_*` environment variables (`XIAOMI_EVENT`, `XIAOMI_AUDIO_FILE`, ...).
 //!
 //! Hooks run detached from the audio path: a failing or slow hook never stalls
-//! recording, and the gateway never deletes the audio file — the `end` hook owns
-//! it and is free to move, upload, or remove it.
+//! recording. The `end` hook may move, upload, or remove the file; retention
+//! cleanup may eventually remove older recordings.
 
 use std::collections::HashMap;
 use std::io::Write as _;
@@ -142,7 +142,9 @@ impl HookConfig {
         match arg.split_once('=') {
             Some((event, path)) => {
                 let parsed = HookEvent::parse(event).ok_or_else(|| {
-                    anyhow::anyhow!("Unknown hook event \"{event}\" (expected \"start\" or \"end\")")
+                    anyhow::anyhow!(
+                        "Unknown hook event \"{event}\" (expected \"start\" or \"end\")"
+                    )
                 })?;
                 if path.trim().is_empty() {
                     anyhow::bail!("Hook \"{arg}\" is missing a script path");
@@ -206,7 +208,10 @@ impl HookConfig {
                 ),
             };
             for script in scripts {
-                anyhow::ensure!(!script.trim().is_empty(), "Hook script path cannot be empty");
+                anyhow::ensure!(
+                    !script.trim().is_empty(),
+                    "Hook script path cannot be empty"
+                );
                 let script = PathBuf::from(script);
                 let script = if script.is_absolute() {
                     script
@@ -260,17 +265,13 @@ fn resolve(script: &Path) -> PathBuf {
 /// Explains a spawn failure in terms the user can act on.
 fn spawn_error(script: &Path, e: std::io::Error) -> anyhow::Error {
     let hint = match e.kind() {
-        std::io::ErrorKind::NotFound if !script.exists() => {
-            " (file does not exist)"
-        }
+        std::io::ErrorKind::NotFound if !script.exists() => " (file does not exist)",
         // The file is there, so ENOENT is the kernel failing to find the
         // interpreter named by the script's shebang line.
         std::io::ErrorKind::NotFound => {
             " (file exists; check its #! shebang line points to a real interpreter)"
         }
-        std::io::ErrorKind::PermissionDenied => {
-            " (not executable; run: chmod +x <script>)"
-        }
+        std::io::ErrorKind::PermissionDenied => " (not executable; run: chmod +x <script>)",
         _ => "",
     };
     anyhow::anyhow!("could not execute {}: {e}{hint}", script.display())
@@ -316,16 +317,24 @@ fn spawn_hook(script: &Path, payload: &str, env: &[(&'static str, String)]) -> a
         }
     }
 
-    let mut child = command
-        .spawn()
-        .map_err(|e| spawn_error(&script, e))?;
+    let started = std::time::Instant::now();
+    log::debug!(
+        "[HOOK] Spawning {} (payload {} bytes)",
+        script.display(),
+        payload.len()
+    );
+    let mut child = command.spawn().map_err(|e| spawn_error(&script, e))?;
 
+    let pid = child.id();
+    log::debug!("[HOOK] Spawned {} pid={pid}", script.display());
     if let Some(mut stdin) = child.stdin.take() {
         let payload = payload.to_string();
         // Write on a detached thread: a hook that never reads stdin would
         // otherwise block the audio thread once the pipe buffer fills.
         std::thread::spawn(move || {
-            let _ = stdin.write_all(payload.as_bytes());
+            if let Err(e) = stdin.write_all(payload.as_bytes()) {
+                log::debug!("[HOOK] pid={pid} stdin delivery failed: {e}");
+            }
         });
     }
 
@@ -342,9 +351,8 @@ fn spawn_hook(script: &Path, payload: &str, env: &[(&'static str, String)]) -> a
         // stderr on its own thread so a hook writing heavily to one stream
         // cannot block the other.
         let err_label = label.clone();
-        let err_thread = stderr.map(|stderr| {
-            std::thread::spawn(move || relay(stderr, &err_label, true))
-        });
+        let err_thread =
+            stderr.map(|stderr| std::thread::spawn(move || relay(stderr, &err_label, true)));
 
         if let Some(stdout) = stdout {
             relay(stdout, &label, false);
@@ -354,8 +362,14 @@ fn spawn_hook(script: &Path, payload: &str, env: &[(&'static str, String)]) -> a
         }
 
         match child.wait() {
-            Ok(status) if status.success() => log::debug!("[HOOK] {label} finished"),
-            Ok(status) => log::warn!("[HOOK] {label} exited with {status}"),
+            Ok(status) if status.success() => log::debug!(
+                "[HOOK] {label} pid={pid} finished in {:?}",
+                started.elapsed()
+            ),
+            Ok(status) => log::warn!(
+                "[HOOK] {label} pid={pid} exited with {status} after {:?}",
+                started.elapsed()
+            ),
             Err(e) => log::warn!("[HOOK] {label} could not be waited on: {e}"),
         }
     });

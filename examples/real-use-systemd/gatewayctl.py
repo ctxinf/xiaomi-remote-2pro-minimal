@@ -88,7 +88,7 @@ def copy_if_changed(src: Path, dst: Path, mode: int = 0o755) -> bool:
 def gateway_args(cfg) -> list[str]:
     gw = cfg.section("gateway")
     args = [
-        "--hook-config", str(INSTALL_HOOK_DIR / "hooks.json"),
+        "--hook-config", str(INSTALL_HOOK_DIR / "hooks.jsonc"),
         "--voice-key", str(gw.get("voice_key", "auto")),
         "--gain", str(gw.get("gain_db", 0.0)),
         "--keep-hours", str(gw.get("keep_hours", 24)),
@@ -186,11 +186,11 @@ def cmd_install(args: argparse.Namespace) -> int:
         if copy_if_changed(HERE / name, INSTALL_HOOK_DIR / name):
             changed.append(name)
     if write_if_changed(
-        INSTALL_HOOK_DIR / "hooks.json",
+        INSTALL_HOOK_DIR / "hooks.jsonc",
         json.dumps({"hooks": {"start": ["./on_record.py"],
                               "end": ["./pipeline.py"]}}, indent=2) + "\n",
     ):
-        changed.append("hooks.json")
+        changed.append("hooks.jsonc")
 
     unit_name = f"{cfg.get('service', 'name', 'xiaomi-remote-gateway')}.service"
     unit_path = UNIT_DIR / unit_name

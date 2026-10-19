@@ -11,25 +11,42 @@ pub fn read(path: &Path) -> anyhow::Result<serde_json::Value> {
     let mut quoted = false;
     while i < bytes.len() {
         if quoted {
-            if bytes[i] == b'\\' { i += 2; continue; }
-            if bytes[i] == b'"' { quoted = false; }
+            if bytes[i] == b'\\' {
+                i += 2;
+                continue;
+            }
+            if bytes[i] == b'"' {
+                quoted = false;
+            }
         } else if bytes[i] == b'"' {
             quoted = true;
         } else if bytes[i..].starts_with(b"//") {
-            while i < bytes.len() && bytes[i] != b'\n' { bytes[i] = b' '; i += 1; }
-            continue;
-        } else if bytes[i..].starts_with(b"/*") {
-            bytes[i] = b' '; bytes[i + 1] = b' '; i += 2;
-            while i < bytes.len() && !bytes[i..].starts_with(b"*/") {
-                if bytes[i] != b'\n' && bytes[i] != b'\r' { bytes[i] = b' '; }
+            while i < bytes.len() && bytes[i] != b'\n' {
+                bytes[i] = b' ';
                 i += 1;
             }
-            anyhow::ensure!(i < bytes.len(), "Unterminated comment in {}", path.display());
-            bytes[i] = b' '; bytes[i + 1] = b' '; i += 2;
+            continue;
+        } else if bytes[i..].starts_with(b"/*") {
+            bytes[i] = b' ';
+            bytes[i + 1] = b' ';
+            i += 2;
+            while i < bytes.len() && !bytes[i..].starts_with(b"*/") {
+                if bytes[i] != b'\n' && bytes[i] != b'\r' {
+                    bytes[i] = b' ';
+                }
+                i += 1;
+            }
+            anyhow::ensure!(
+                i < bytes.len(),
+                "Unterminated comment in {}",
+                path.display()
+            );
+            bytes[i] = b' ';
+            bytes[i + 1] = b' ';
+            i += 2;
             continue;
         }
         i += 1;
     }
-    serde_json::from_slice(&bytes)
-        .with_context(|| format!("Invalid JSONC in {}", path.display()))
+    serde_json::from_slice(&bytes).with_context(|| format!("Invalid JSONC in {}", path.display()))
 }

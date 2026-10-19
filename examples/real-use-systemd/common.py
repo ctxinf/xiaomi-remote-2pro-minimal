@@ -375,8 +375,12 @@ def load_config(path: Path = CONFIG_PATH, *, resolve_secrets: bool = True) -> Co
             f"  create it with:  ./install-service.sh config init"
         )
     raw = read_jsonc(path)
-    if HOOK_CONFIG_PATH.exists():
-        hook = read_jsonc(HOOK_CONFIG_PATH)
+    unknown = set(raw) - {"service", "gateway"}
+    if unknown:
+        raise Fail(f"move hook settings to hook.jsonc: {sorted(unknown)}")
+    hook_path = path.with_name("hook.jsonc")
+    if hook_path.exists():
+        hook = read_jsonc(hook_path)
         unknown = set(hook) - {"asr", "llm", "output", "audio"}
         if unknown:
             raise Fail(f"unknown hook settings: {sorted(unknown)}")

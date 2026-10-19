@@ -51,7 +51,12 @@ struct Cli {
     hook_config: Option<PathBuf>,
 
     /// Audio digital gain in dB (-24.0 to +24.0)
-    #[arg(long, default_value_t = 0.0, allow_negative_numbers = true, global = true)]
+    #[arg(
+        long,
+        default_value_t = 0.0,
+        allow_negative_numbers = true,
+        global = true
+    )]
     gain: f64,
 
     /// Reconnect interval in seconds
@@ -123,38 +128,78 @@ async fn main() -> anyhow::Result<()> {
     let mut cli = Cli::from_arg_matches(&matches)?;
     if let Some(path) = cli.config.clone() {
         let value = xiaomi_remote_pro2_gateway::config::read(&path)?;
-        let object = value.as_object().context("Gateway configuration must be an object")?;
+        let object = value
+            .as_object()
+            .context("Gateway configuration must be an object")?;
         for (key, value) in object {
-            if key == "hooks" { continue; }
+            if key == "hooks" {
+                continue;
+            }
             let id = match key.as_str() {
-                "record_dir" | "gain" | "reconnect" | "device_name" |
-                "keep_hours" | "keep_max" | "voice_key" => key.as_str(),
+                "record_dir" | "gain" | "reconnect" | "device_name" | "keep_hours" | "keep_max"
+                | "voice_key" => key.as_str(),
                 _ => anyhow::bail!("Unknown gateway configuration option: {key}"),
             };
-            if matches.value_source(id) == Some(clap::parser::ValueSource::CommandLine) { continue; }
+            if matches.value_source(id) == Some(clap::parser::ValueSource::CommandLine) {
+                continue;
+            }
             match id {
                 "record_dir" => {
                     let dir = PathBuf::from(value.as_str().context("record_dir must be a string")?);
-                    cli.record_dir = Some(if dir.is_absolute() { dir } else { path.parent().unwrap_or(std::path::Path::new(".")).join(dir) });
+                    cli.record_dir = Some(if dir.is_absolute() {
+                        dir
+                    } else {
+                        path.parent().unwrap_or(std::path::Path::new(".")).join(dir)
+                    });
                 }
                 "gain" => cli.gain = value.as_f64().context("gain must be a number")?,
-                "reconnect" => cli.reconnect = value.as_u64().context("reconnect must be a nonnegative integer")?,
-                "keep_hours" => cli.keep_hours = value.as_u64().context("keep_hours must be a nonnegative integer")?,
-                "keep_max" => cli.keep_max = usize::try_from(value.as_u64().context("keep_max must be a nonnegative integer")?)?,
-                "device_name" => cli.device_name = Some(value.as_str().context("device_name must be a string")?.into()),
-                "voice_key" => cli.voice_key = value.as_str().context("voice_key must be a string")?.into(),
+                "reconnect" => {
+                    cli.reconnect = value
+                        .as_u64()
+                        .context("reconnect must be a nonnegative integer")?
+                }
+                "keep_hours" => {
+                    cli.keep_hours = value
+                        .as_u64()
+                        .context("keep_hours must be a nonnegative integer")?
+                }
+                "keep_max" => {
+                    cli.keep_max = usize::try_from(
+                        value
+                            .as_u64()
+                            .context("keep_max must be a nonnegative integer")?,
+                    )?
+                }
+                "device_name" => {
+                    cli.device_name = Some(
+                        value
+                            .as_str()
+                            .context("device_name must be a string")?
+                            .into(),
+                    )
+                }
+                "voice_key" => {
+                    cli.voice_key = value.as_str().context("voice_key must be a string")?.into()
+                }
                 _ => unreachable!(),
             }
         }
     }
-    anyhow::ensure!(cli.gain.is_finite() && (-24.0..=24.0).contains(&cli.gain), "gain must be between -24 and 24 dB");
+    anyhow::ensure!(
+        cli.gain.is_finite() && (-24.0..=24.0).contains(&cli.gain),
+        "gain must be between -24 and 24 dB"
+    );
 
     env_logger::Builder::new()
-        .filter_level(if cli.verbose {
-            log::LevelFilter::Trace
-        } else {
-            log::LevelFilter::Info
-        })
+        .filter_level(log::LevelFilter::Warn)
+        .filter_module(
+            "xiaomi_remote_pro2_gateway",
+            if cli.verbose {
+                log::LevelFilter::Trace
+            } else {
+                log::LevelFilter::Info
+            },
+        )
         .format_timestamp_millis()
         .init();
 
@@ -177,7 +222,9 @@ fn build_hooks(cli: &Cli) -> anyhow::Result<HookConfig> {
     };
     if let Some(path) = &cli.config {
         let value = xiaomi_remote_pro2_gateway::config::read(path)?;
-        if value.get("hooks").is_some() { hooks.merge(HookConfig::from_file(path)?); }
+        if value.get("hooks").is_some() {
+            hooks.merge(HookConfig::from_file(path)?);
+        }
     }
     for arg in &cli.hooks {
         let (event, script) = HookConfig::parse_arg(arg)?;
@@ -207,7 +254,10 @@ async fn cmd_scan(seconds: u64) -> anyhow::Result<()> {
         .context("Bluetooth adapter is not available or turned off")?;
 
     println!("\nChecking system-connected devices with ATVV Voice Service...");
-    if let Ok(devices) = adapter.connected_devices_with_services(&[atvv::SERVICE]).await {
+    if let Ok(devices) = adapter
+        .connected_devices_with_services(&[atvv::SERVICE])
+        .await
+    {
         if !devices.is_empty() {
             for d in &devices {
                 let name = d.name().unwrap_or_else(|_| "(unnamed)".into());

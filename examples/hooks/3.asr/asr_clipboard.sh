@@ -13,7 +13,7 @@
 # Setup:
 #   cp .env.example .env      # then fill in your key
 #   chmod +x ./asr_clipboard.sh
-#   xiaomi-remote-pro2-gateway --hook-config ./examples/hooks/3.asr/hooks.json
+#   xiaomi-remote-pro2-gateway --hook-config ./examples/hooks/3.asr/hooks.jsonc
 #
 # Requires: curl, base64 (coreutils), wl-clipboard. python3 is used for JSON
 # decoding when available, with a sed fallback if it is not.

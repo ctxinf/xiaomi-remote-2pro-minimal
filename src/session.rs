@@ -162,11 +162,20 @@ impl AtvvSession {
 
     pub fn handle_audio(&mut self, data: &[u8], now_ms: u64, actions: &mut Vec<Action>) {
         if !self.caps_confirmed || data.is_empty() {
+            log::trace!(
+                "[ATVV] Dropped audio: caps_confirmed={}, bytes={}",
+                self.caps_confirmed,
+                data.len()
+            );
             return;
         }
         if !self.streaming {
             if let Some(t) = self.last_stop_ms {
                 if now_ms.saturating_sub(t) < STALE_AUDIO_WINDOW_MS {
+                    log::trace!(
+                        "[ATVV] Dropped stale audio {}ms after stop",
+                        now_ms.saturating_sub(t)
+                    );
                     return;
                 }
             }
@@ -194,6 +203,11 @@ impl AtvvSession {
             pcm.extend_from_slice(&samples);
         });
 
+        log::trace!(
+            "[ATVV] Decoded {} bytes into {} PCM samples",
+            data.len(),
+            pcm.len()
+        );
         if !pcm.is_empty() {
             actions.push(Action::Pcm(pcm));
         }

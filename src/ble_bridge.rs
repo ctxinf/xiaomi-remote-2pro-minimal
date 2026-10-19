@@ -5,7 +5,9 @@
 //! and feeds decoded PCM to the AudioSink.
 
 use anyhow::Context as _;
-use bluest::{Adapter, AdvertisingDevice, Characteristic, CharacteristicProperties, ConnectionEvent, Device};
+use bluest::{
+    Adapter, AdvertisingDevice, Characteristic, CharacteristicProperties, ConnectionEvent, Device,
+};
 use futures_lite::StreamExt;
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
@@ -22,7 +24,9 @@ pub const NAME_CANDIDATES: [&str; 4] = [
 ];
 
 pub fn name_matches(name: &str) -> bool {
-    NAME_CANDIDATES.iter().any(|c| name == *c || name.starts_with(c))
+    NAME_CANDIDATES
+        .iter()
+        .any(|c| name == *c || name.starts_with(c))
 }
 
 pub fn advertisement_is_candidate(adv: &AdvertisingDevice) -> bool {
@@ -248,7 +252,9 @@ enum Ended {
     Shutdown,
     /// The round is over and the outer loop should rebuild everything.
     /// `was_live` records whether ATVV ever came up, which decides the backoff.
-    Disconnected { was_live: bool },
+    Disconnected {
+        was_live: bool,
+    },
 }
 
 async fn find_remote(
@@ -257,7 +263,10 @@ async fn find_remote(
     shutdown: &CancellationToken,
 ) -> anyhow::Result<Option<Device>> {
     // 1. Check system connected devices exposing ATVV service
-    match adapter.connected_devices_with_services(&[atvv::SERVICE]).await {
+    match adapter
+        .connected_devices_with_services(&[atvv::SERVICE])
+        .await
+    {
         Ok(devices) => {
             for device in devices {
                 let name = device.name().unwrap_or_default();
@@ -268,7 +277,11 @@ async fn find_remote(
                 }
                 log::info!(
                     "[BLE GATEWAY] Found remote among system connected devices: \"{}\" [{}]",
-                    if name.is_empty() { "Xiaomi Remote" } else { &name },
+                    if name.is_empty() {
+                        "Xiaomi Remote"
+                    } else {
+                        &name
+                    },
                     device.id()
                 );
                 return Ok(Some(device));
@@ -284,7 +297,10 @@ async fn find_remote(
         "[BLE GATEWAY] Scanning BLE advertisements ({:.0}s)...",
         config.scan_timeout.as_secs_f64()
     );
-    let mut scan = adapter.scan(&[]).await.context("Failed to start BLE scan")?;
+    let mut scan = adapter
+        .scan(&[])
+        .await
+        .context("Failed to start BLE scan")?;
     let deadline = tokio::time::sleep(config.scan_timeout);
     tokio::pin!(deadline);
 
@@ -324,13 +340,19 @@ async fn find_remote(
 }
 
 async fn read_device_info(device: &Device) {
-    if let Ok(services) = device.discover_services_with_uuid(atvv::DEVICE_INFORMATION_SERVICE).await {
+    if let Ok(services) = device
+        .discover_services_with_uuid(atvv::DEVICE_INFORMATION_SERVICE)
+        .await
+    {
         if let Some(service) = services.into_iter().next() {
             if let Ok(chars) = service.discover_characteristics().await {
                 for c in chars {
                     if c.uuid() == atvv::MODEL_NUMBER_CHARACTERISTIC {
                         if let Ok(val) = c.read().await {
-                            let model = String::from_utf8_lossy(&val).trim_matches('\0').trim().to_string();
+                            let model = String::from_utf8_lossy(&val)
+                                .trim_matches('\0')
+                                .trim()
+                                .to_string();
                             if !model.is_empty() {
                                 log::info!("[BLE STATUS] Remote Model Number: {}", model);
                             }
@@ -338,7 +360,10 @@ async fn read_device_info(device: &Device) {
                     }
                     if c.uuid() == atvv::FIRMWARE_REVISION_CHARACTERISTIC {
                         if let Ok(val) = c.read().await {
-                            let fw = String::from_utf8_lossy(&val).trim_matches('\0').trim().to_string();
+                            let fw = String::from_utf8_lossy(&val)
+                                .trim_matches('\0')
+                                .trim()
+                                .to_string();
                             if !fw.is_empty() {
                                 log::info!("[BLE STATUS] Firmware Revision: {}", fw);
                             }
@@ -350,9 +375,15 @@ async fn read_device_info(device: &Device) {
     }
 
     // Read battery level
-    if let Ok(services) = device.discover_services_with_uuid(atvv::BATTERY_SERVICE).await {
+    if let Ok(services) = device
+        .discover_services_with_uuid(atvv::BATTERY_SERVICE)
+        .await
+    {
         if let Some(service) = services.into_iter().next() {
-            if let Ok(chars) = service.discover_characteristics_with_uuid(atvv::BATTERY_LEVEL_CHARACTERISTIC).await {
+            if let Ok(chars) = service
+                .discover_characteristics_with_uuid(atvv::BATTERY_LEVEL_CHARACTERISTIC)
+                .await
+            {
                 if let Some(c) = chars.into_iter().next() {
                     if let Ok(val) = c.read().await {
                         if let Some(&level) = val.first() {
@@ -402,9 +433,17 @@ async fn connect_and_run(
     let adopted_existing_link = device.is_connected().await;
 
     if adopted_existing_link {
-        log::info!("[BLE STATUS] Adopting existing system link: \"{}\" [{}]", dev_name, device.id());
+        log::info!(
+            "[BLE STATUS] Adopting existing system link: \"{}\" [{}]",
+            dev_name,
+            device.id()
+        );
     } else {
-        log::info!("[BLE STATUS] Connecting to device: \"{}\" [{}]...", dev_name, device.id());
+        log::info!(
+            "[BLE STATUS] Connecting to device: \"{}\" [{}]...",
+            dev_name,
+            device.id()
+        );
     }
 
     adapter
@@ -412,7 +451,11 @@ async fn connect_and_run(
         .await
         .context("Failed to establish BLE connection")?;
 
-    log::info!("[BLE STATUS] Connected successfully: \"{}\" [{}]", dev_name, device.id());
+    log::info!(
+        "[BLE STATUS] Connected successfully: \"{}\" [{}]",
+        dev_name,
+        device.id()
+    );
 
     // Subscribe to link state *before* the handshake, so a drop that happens
     // during service discovery is not missed.
@@ -544,6 +587,7 @@ async fn connect_and_run(
                     last_rx = Instant::now();
                     probe_sent = None;
                     let elapsed_ms = start_instant.elapsed().as_millis() as u64;
+                    log::debug!("[BLE ATVV] RX control at {elapsed_ms}ms: {data:02X?}");
                     session.handle_control(&data, elapsed_ms, &mut actions);
                 }
                 Some(Err(e)) => {
@@ -560,6 +604,7 @@ async fn connect_and_run(
                     last_rx = Instant::now();
                     probe_sent = None;
                     let elapsed_ms = start_instant.elapsed().as_millis() as u64;
+                    log::trace!("[BLE ATVV] RX audio at {elapsed_ms}ms: {} bytes", data.len());
                     session.handle_audio(&data, elapsed_ms, &mut actions);
                 }
                 Some(Err(e)) => {
@@ -584,6 +629,7 @@ async fn connect_and_run(
         for action in actions.drain(..) {
             match action {
                 Action::SendTx(bytes) => {
+                    log::debug!("[BLE ATVV] TX control: {bytes:02X?}");
                     if let Err(e) = write_tx(&tx, tx_props.as_ref(), &bytes).await {
                         log::warn!("[BLE ATVV] Failed to write TX: {e}");
                     }
@@ -607,7 +653,9 @@ async fn connect_and_run(
 
         if let Some(err) = fatal_err {
             log::error!("[BLE ATVV] Fatal protocol error: {err}");
-            break Ended::Disconnected { was_live: session.is_caps_confirmed() };
+            break Ended::Disconnected {
+                was_live: session.is_caps_confirmed(),
+            };
         }
     };
 
