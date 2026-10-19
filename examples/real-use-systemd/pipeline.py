@@ -3,7 +3,7 @@
 
 The gateway runs this with the recording's path in `XIAOMI_AUDIO_FILE` (and the
 same payload as JSON on stdin), with the working directory set to this script's
-own directory. Everything else comes from `config.toml`; credentials come from
+own directory. Everything else comes from `config.jsonc`; credentials come from
 the encrypted secret store (see `common.SecretStore`).
 
 Both hops speak the OpenAI chat-completions shape, which is what Aliyun's

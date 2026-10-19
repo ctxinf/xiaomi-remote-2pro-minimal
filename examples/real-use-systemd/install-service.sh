@@ -7,7 +7,7 @@
 #
 # The logic lives in gatewayctl.py; this shim only picks an interpreter and
 # fails early with a readable message if it cannot. Python 3.11+ is required
-# for tomllib (stdlib TOML), which is what keeps the whole thing dependency-free.
+# and uses only the standard library.
 
 set -euo pipefail
 
@@ -27,7 +27,7 @@ find_python() {
 }
 
 if ! python=$(find_python); then
-    echo "error: need Python 3.11+ (for tomllib); none found on PATH." >&2
+    echo "error: need Python 3.11+ ; none found on PATH." >&2
     echo "       Fedora: sudo dnf install python3" >&2
     exit 1
 fi

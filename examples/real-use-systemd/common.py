@@ -4,10 +4,7 @@ Imported by both `gatewayctl.py` (the installer CLI) and `pipeline.py` (the
 `end` hook). Standard library only — a hook that needs `pip install` before it
 can transcribe is a hook that breaks the first time the venv moves.
 
-Why TOML and not YAML: `tomllib` ships with Python 3.11+, so the config parses
-with zero dependencies, and unlike JSON it takes comments — which matters for a
-single file that is meant to be hand-edited. YAML would mean a PyYAML dep on
-every machine the service is installed on, for no gain here.
+JSONC keeps user-facing settings small and supports comments without dependencies.
 """
 
 from __future__ import annotations
@@ -19,7 +16,7 @@ import shutil
 import subprocess
 import sys
 import time
-import tomllib
+import re
 from pathlib import Path
 from typing import Any
 
@@ -38,7 +35,8 @@ CONFIG_DIR = _xdg("XDG_CONFIG_HOME", ".config") / APP
 STATE_DIR = _xdg("XDG_STATE_HOME", ".local/state") / APP
 DATA_DIR = _xdg("XDG_DATA_HOME", ".local/share") / APP
 
-CONFIG_PATH = Path(os.environ.get("XIAOMI_GATEWAY_CONFIG") or CONFIG_DIR / "config.toml")
+CONFIG_PATH = Path(os.environ.get("XIAOMI_GATEWAY_CONFIG") or CONFIG_DIR / "config.jsonc")
+HOOK_CONFIG_PATH = CONFIG_PATH.with_name("hook.jsonc")
 SECRETS_PATH = CONFIG_DIR / "secrets.enc"
 SECRETS_KEY_PATH = CONFIG_DIR / "secrets.key"
 
@@ -354,14 +352,38 @@ def _warn_legacy_output(output: dict[str, Any]) -> None:
             f"move it to {LEGACY_OUTPUT_KEYS[old]}")
 
 
+def read_jsonc(path: Path) -> dict[str, Any]:
+    # Match strings before comments so URLs and escaped quotes remain intact.
+    pattern = r'"(?:\\.|[^"\\])*"|//[^\n]*|/\*[\s\S]*?\*/'
+    def strip(match):
+        token = match.group()
+        return token if token.startswith('"') else ''.join(
+            '\n' if c == '\n' else ' ' for c in token)
+    try:
+        value = json.loads(re.sub(pattern, strip, path.read_text()))
+    except (OSError, ValueError) as e:
+        raise Fail(f"invalid JSONC configuration {path}: {e}") from e
+    if not isinstance(value, dict):
+        raise Fail(f"{path} must contain an object")
+    return value
+
+
 def load_config(path: Path = CONFIG_PATH, *, resolve_secrets: bool = True) -> Config:
     if not path.exists():
         raise Fail(
             f"config not found: {path}\n"
             f"  create it with:  ./install-service.sh config init"
         )
-    with path.open("rb") as fh:
-        raw = tomllib.load(fh)
+    raw = read_jsonc(path)
+    if HOOK_CONFIG_PATH.exists():
+        hook = read_jsonc(HOOK_CONFIG_PATH)
+        unknown = set(hook) - {"asr", "llm", "output", "audio"}
+        if unknown:
+            raise Fail(f"unknown hook settings: {sorted(unknown)}")
+        raw = _merge(raw, hook)
+    unknown = set(raw) - set(DEFAULTS)
+    if unknown:
+        raise Fail(f"unknown settings: {sorted(unknown)}")
     _warn_legacy_output(raw.get("output", {}))
     data = _merge(DEFAULTS, raw)
     missing: list[str] = []

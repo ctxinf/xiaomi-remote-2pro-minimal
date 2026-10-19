@@ -4,7 +4,7 @@
 Usage goes through `./install-service.sh`, which is just a shim over this file.
 
 Everything here is an *upsert*: running `install` twice is the same as running
-it once, and running it after editing `config.toml` reconciles the unit with
+it once, and running it after editing `config.jsonc` reconciles the unit with
 the config. Nothing is written unless its content actually changed, so a
 re-install of an unchanged deployment does not bounce the service.
 
@@ -31,7 +31,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (  # noqa: E402
     CONFIG_DIR, CONFIG_PATH, DATA_DIR, HERE, INSTALL_BIN_DIR, INSTALL_HOOK_DIR,
-    REPO_ROOT, SECRETS_KEY_PATH, SECRETS_PATH, Fail, SecretStore, load_config,
+    HOOK_CONFIG_PATH, REPO_ROOT, SECRETS_KEY_PATH, SECRETS_PATH, Fail, SecretStore, load_config,
     which_binary,
 )
 
@@ -144,14 +144,15 @@ WantedBy=default.target
 
 
 def cmd_config_init(args: argparse.Namespace) -> int:
-    template = HERE / "config.example.toml"
-    if CONFIG_PATH.exists() and not args.force:
-        say(f"config already exists: {CONFIG_PATH}  (--force to overwrite)")
-        return 0
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(template, CONFIG_PATH)
-    CONFIG_PATH.chmod(0o644)
-    say(f"wrote {CONFIG_PATH}")
+    for template, destination in (("config.example.jsonc", CONFIG_PATH),
+                                  ("hook.example.jsonc", HOOK_CONFIG_PATH)):
+        if destination.exists() and not args.force:
+            say(f"config already exists: {destination}  (--force to overwrite)")
+            continue
+        shutil.copy2(HERE / template, destination)
+        destination.chmod(0o644)
+        say(f"wrote {destination}")
     say("next:  ./install-service.sh secret add dashscope_api_key sk-xxxx")
     return 0
 
@@ -328,7 +329,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         ok = ok and good
 
     check(f"python {sys.version_info.major}.{sys.version_info.minor} >= 3.11",
-          sys.version_info >= (3, 11), "tomllib needs Python 3.11+")
+          sys.version_info >= (3, 11), "Python 3.11+ required")
     check("openssl present", shutil.which("openssl") is not None, "dnf install openssl")
     check(f"config {CONFIG_PATH}", CONFIG_PATH.exists(), "./install-service.sh config init")
     if not CONFIG_PATH.exists():
@@ -420,9 +421,9 @@ def build_parser() -> argparse.ArgumentParser:
     rm.add_argument("name")
     sec.set_defaults(func=cmd_secret)
 
-    cfgp = sub.add_parser("config", help="manage config.toml")
+    cfgp = sub.add_parser("config", help="manage config.jsonc")
     cfg_sub = cfgp.add_subparsers(dest="config_cmd", required=True)
-    init = cfg_sub.add_parser("init", help="write config.toml from the template")
+    init = cfg_sub.add_parser("init", help="write config.jsonc from the template")
     init.add_argument("--force", action="store_true")
     init.set_defaults(func=cmd_config_init)
     cfg_sub.add_parser("show", help="print the config").set_defaults(func=cmd_show)
