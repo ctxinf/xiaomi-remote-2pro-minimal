@@ -20,3 +20,4 @@ __pycache__/
 /examples/4.daily-use/hooks/credentials.key
 /examples/4.daily-use/hooks/.hooks-config-*
 /examples/4.daily-use/hooks/.credentials-*
+/examples/4.daily-use/hooks/api-usage.jsonl

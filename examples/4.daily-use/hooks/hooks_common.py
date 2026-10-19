@@ -137,5 +137,3 @@ class SecretStore:
 
     def names(self) -> list[str]:
         return sorted(self.load())
-
-

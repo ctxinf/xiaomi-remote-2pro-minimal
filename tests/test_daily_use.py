@@ -30,6 +30,12 @@ service = load('daily_service', EXAMPLE / 'service-manage.py')
 
 
 class DailyUseTests(unittest.TestCase):
+    def setUp(self):
+        # API 模拟测试不向真实示例目录写统计。
+        self.usage_patch = patch.object(entry, 'record_call')
+        self.record_call = self.usage_patch.start()
+        self.addCleanup(self.usage_patch.stop)
+
     def test_jsonc_and_reference_preserve_comments(self):
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / 'hooks-config.jsonc'
@@ -81,6 +87,12 @@ class DailyUseTests(unittest.TestCase):
             with patch.object(entry, 'urlopen', return_value=io.BytesIO(b'{"output":{}}')):
                 with self.assertRaisesRegex(common.Fail, 'output.text'):
                     entry.transcribe(audio, {**common.DEFAULTS, 'api_key': 'test-placeholder'})
+            # 解析失败前已记录收到的响应，以免漏计 API 用量。
+            self.assertEqual(self.record_call.call_args.kwargs['result'], {'output': {}})
+            with patch.object(entry, 'urlopen', side_effect=OSError('network-test')):
+                with self.assertRaises(OSError):
+                    entry.transcribe(audio, {**common.DEFAULTS, 'api_key': 'test-placeholder'})
+            self.assertIsInstance(self.record_call.call_args.kwargs['error'], OSError)
 
     def test_recording_retained_on_clipboard_failure(self):
         with tempfile.TemporaryDirectory() as directory:

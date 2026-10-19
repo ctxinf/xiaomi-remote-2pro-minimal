@@ -25,3 +25,13 @@ examples/4.daily-use/install-service.sh paths
 - `keyd-example/`：仅供参考，自行修改并应用，安装脚本不会处理。
 
 桌面会话变更后，可在当前图形终端重新运行安装或更新命令，将显示会话变量同步给用户级 systemd。
+
+API 调用会追加到 hooks 同目录的 `api-usage.jsonl`（权限 0600）。记录 UTC 时间、模型、请求状态、音频时长、请求耗时，以及响应原样返回的 `usage` 和 `request_id`；不保存音频、识别文字或 API Key。统计写入失败不影响复制。
+
+```sh
+python3 examples/4.daily-use/hooks/api-usage-stats.py
+# 查看已安装版本的统计
+python3 ~/.local/share/xiaomi-remote-gateway/hooks/api-usage-stats.py
+```
+
+汇总逐项累加 API 返回的所有数值计量字段，包括嵌套的 input/output/cache token、API 音频秒数等，保留原字段路径。API 未返回的字段不会推算。总 token 与其明细分别展示，不重复相加。提交音频累计秒数由 WAV 时长计算，包括失败调用和重试；请求耗时单独统计。记录收到成功响应时即写入，后续文本解析或复制失败不影响 API 用量记录。历史调用没有记录，统计从启用后开始。

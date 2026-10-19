@@ -7,10 +7,12 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import time
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from hooks_common import Fail, api_key, read_config
+from api_usage import record_call
 
 
 def transcribe(audio, config):
@@ -30,10 +32,16 @@ def transcribe(audio, config):
         "Content-Type": "application/json",
         "X-DashScope-SSE": "disable",
     })
-    with urlopen(request, timeout=60) as response:
-        result = json.load(response)
+    started = time.perf_counter()
+    try:
+        with urlopen(request, timeout=60) as response:
+            result = json.load(response)
+    except Exception as error:
+        record_call(audio, config["model"], time.perf_counter() - started, error=error)
+        raise
+    record_call(audio, config["model"], time.perf_counter() - started, result=result)
     # 当前 ASR 返回 output.text；同时兼容多模态 choices 格式。
-    output = result.get("output")
+    output = result.get("output") if isinstance(result, dict) else None
     if not isinstance(output, dict):
         raise Fail("ASR 响应缺少 output 对象")
     if "text" in output:
