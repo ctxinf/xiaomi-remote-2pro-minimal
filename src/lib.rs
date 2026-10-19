@@ -5,6 +5,7 @@
 //! - Decodes the stream and saves each take to a temporary WAV file
 //! - Triggers hook scripts on the `start` / `end` recording events
 
+pub mod config;
 pub mod adpcm;
 pub mod atvv;
 pub mod ble_bridge;

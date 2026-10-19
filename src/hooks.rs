@@ -158,7 +158,7 @@ impl HookConfig {
         }
     }
 
-    /// Loads hooks from a JSON config file.
+    /// Loads hooks from a JSONC config file.
     ///
     /// ```json
     /// { "hooks": { "start": "./on_start.sh", "end": ["./transcribe.py", "./notify.js"] } }
@@ -167,10 +167,7 @@ impl HookConfig {
     /// Relative script paths resolve against the config file's directory, so a
     /// config can be moved around with its scripts.
     pub fn from_file(path: &Path) -> anyhow::Result<Self> {
-        let text = std::fs::read_to_string(path)
-            .map_err(|e| anyhow::anyhow!("Failed to read hook config {}: {e}", path.display()))?;
-        let value: serde_json::Value = serde_json::from_str(&text)
-            .map_err(|e| anyhow::anyhow!("Invalid JSON in hook config {}: {e}", path.display()))?;
+        let value = crate::config::read(path)?;
 
         // Accept both `{"hooks": {...}}` and a bare `{...}` mapping.
         let table = value.get("hooks").unwrap_or(&value);
@@ -209,6 +206,7 @@ impl HookConfig {
                 ),
             };
             for script in scripts {
+                anyhow::ensure!(!script.trim().is_empty(), "Hook script path cannot be empty");
                 let script = PathBuf::from(script);
                 let script = if script.is_absolute() {
                     script

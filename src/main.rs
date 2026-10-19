@@ -4,7 +4,7 @@
 //! triggers hook scripts on the `start` / `end` recording events.
 
 use anyhow::Context as _;
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use futures_lite::StreamExt;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -26,8 +26,12 @@ use xiaomi_remote_pro2_gateway::voice_key;
     about = "Xiaomi Bluetooth Remote 2 Pro (RC003/ARN9) Voice Gateway: records mic audio and triggers hooks"
 )]
 struct Cli {
-    /// Enable verbose debug logging
-    #[arg(long, short = 'v', global = true)]
+    /// JSONC gateway configuration (CLI options take precedence)
+    #[arg(long, value_name = "FILE", global = true)]
+    config: Option<PathBuf>,
+
+    /// Enable all diagnostic logging (including protocol trace)
+    #[arg(long = "debug", visible_alias = "verbose", short = 'v', global = true)]
     verbose: bool,
 
     #[command(subcommand)]
@@ -42,7 +46,7 @@ struct Cli {
     #[arg(long = "hook", value_name = "[EVENT=]SCRIPT", global = true)]
     hooks: Vec<String>,
 
-    /// JSON file declaring hooks, e.g. {"hooks":{"end":["./transcribe.py"]}}
+    /// JSONC file declaring hooks, e.g. {"hooks":{"end":["./transcribe.py"]}}
     #[arg(long, value_name = "FILE", global = true)]
     hook_config: Option<PathBuf>,
 
@@ -115,11 +119,39 @@ enum Command {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let mut cli = Cli::parse();
+    let matches = Cli::command().get_matches();
+    let mut cli = Cli::from_arg_matches(&matches)?;
+    if let Some(path) = cli.config.clone() {
+        let value = xiaomi_remote_pro2_gateway::config::read(&path)?;
+        let object = value.as_object().context("Gateway configuration must be an object")?;
+        for (key, value) in object {
+            if key == "hooks" { continue; }
+            let id = match key.as_str() {
+                "record_dir" | "gain" | "reconnect" | "device_name" |
+                "keep_hours" | "keep_max" | "voice_key" => key.as_str(),
+                _ => anyhow::bail!("Unknown gateway configuration option: {key}"),
+            };
+            if matches.value_source(id) == Some(clap::parser::ValueSource::CommandLine) { continue; }
+            match id {
+                "record_dir" => {
+                    let dir = PathBuf::from(value.as_str().context("record_dir must be a string")?);
+                    cli.record_dir = Some(if dir.is_absolute() { dir } else { path.parent().unwrap_or(std::path::Path::new(".")).join(dir) });
+                }
+                "gain" => cli.gain = value.as_f64().context("gain must be a number")?,
+                "reconnect" => cli.reconnect = value.as_u64().context("reconnect must be a nonnegative integer")?,
+                "keep_hours" => cli.keep_hours = value.as_u64().context("keep_hours must be a nonnegative integer")?,
+                "keep_max" => cli.keep_max = usize::try_from(value.as_u64().context("keep_max must be a nonnegative integer")?)?,
+                "device_name" => cli.device_name = Some(value.as_str().context("device_name must be a string")?.into()),
+                "voice_key" => cli.voice_key = value.as_str().context("voice_key must be a string")?.into(),
+                _ => unreachable!(),
+            }
+        }
+    }
+    anyhow::ensure!(cli.gain.is_finite() && (-24.0..=24.0).contains(&cli.gain), "gain must be between -24 and 24 dB");
 
     env_logger::Builder::new()
         .filter_level(if cli.verbose {
-            log::LevelFilter::Debug
+            log::LevelFilter::Trace
         } else {
             log::LevelFilter::Info
         })
@@ -143,6 +175,10 @@ fn build_hooks(cli: &Cli) -> anyhow::Result<HookConfig> {
         Some(path) => HookConfig::from_file(path)?,
         None => HookConfig::new(),
     };
+    if let Some(path) = &cli.config {
+        let value = xiaomi_remote_pro2_gateway::config::read(path)?;
+        if value.get("hooks").is_some() { hooks.merge(HookConfig::from_file(path)?); }
+    }
     for arg in &cli.hooks {
         let (event, script) = HookConfig::parse_arg(arg)?;
         hooks.add(event, script);
