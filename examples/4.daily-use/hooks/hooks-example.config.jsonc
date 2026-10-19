@@ -1,0 +1,7 @@
+{
+  // DashScope 原生多模态接口；取消注释可覆盖默认值。
+  // "endpoint": "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
+  // "model": "qwen-audio-3.1-asr-flash",
+  // 留空后运行 credential-manage.py set；密钥不放进命令行参数。
+  "api_key": ""
+}

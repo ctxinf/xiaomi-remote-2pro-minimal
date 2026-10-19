@@ -1,7 +1,0 @@
-// systemd 安装设置。未列出的选项使用内置默认值。
-// 语音处理请编辑同目录的 hook.jsonc。
-{
-  "gateway": {
-    "voice_key": "auto"
-  }
-}

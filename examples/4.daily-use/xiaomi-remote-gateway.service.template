@@ -1,0 +1,15 @@
+[Unit]
+Description=Xiaomi Remote Pro 2 voice gateway
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=@BINARY@ --config @CONFIG@
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,8 @@
+// Rust 网关配置；hooks 的 API 配置位于 hooks/hooks-config.jsonc。
+{
+  "voice_key": "auto",
+  "hooks": {
+    "start": "./hooks/hook-start-entry-do-nothing.py",
+    "end": "./hooks/hook-end-entry.py"
+  }
+}
