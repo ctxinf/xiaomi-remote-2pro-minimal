@@ -5,8 +5,8 @@
 # feedback — a beep, a notification, waking a transcription service.
 #
 # Usage:
-#   chmod +x examples/hooks/on_start.sh
-#   xiaomi-remote-pro2-gateway --hook start=./examples/hooks/on_start.sh
+#   chmod +x examples/1.hooks-print-log/on_start.sh
+#   xiaomi-remote-pro2-gateway --hook start=./examples/1.hooks-print-log/on_start.sh
 
 set -eu
 

@@ -1,0 +1,5 @@
+{
+  "hooks": {
+    "end": "./asr_clipboard.py"
+  }
+}

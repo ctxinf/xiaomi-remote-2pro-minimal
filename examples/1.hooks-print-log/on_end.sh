@@ -11,8 +11,8 @@
 # remove it here, otherwise it stays in the temp directory.
 #
 # Usage:
-#   chmod +x examples/hooks/on_end.sh
-#   xiaomi-remote-pro2-gateway --hook end=./examples/hooks/on_end.sh
+#   chmod +x examples/1.hooks-print-log/on_end.sh
+#   xiaomi-remote-pro2-gateway --hook end=./examples/1.hooks-print-log/on_end.sh
 
 set -eu
 

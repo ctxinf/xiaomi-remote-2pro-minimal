@@ -2,6 +2,6 @@
   // 网关只负责录音。ASR、LLM 和输出方式由你的脚本决定。
   // 脚本路径相对于本配置文件；删除 hooks 即可只录音。
   "hooks": {
-    "end": "./examples/hooks/1.basic/on_end.sh"
+    "end": "./examples/1.hooks-print-log/on_end.sh"
   }
 }
