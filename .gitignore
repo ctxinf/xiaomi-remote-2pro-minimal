@@ -7,10 +7,12 @@ __pycache__/
 .env
 **/.env
 !**/.env.example
+.docs/
+*.md
 
 # Local root-level project documentation
 /*.md
-
+*.log
 # Public example instructions
 !examples/*/README.md
 
