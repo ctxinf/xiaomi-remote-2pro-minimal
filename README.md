@@ -32,3 +32,5 @@ Linux上直接就能用, 如果你使用Windows或Macos系统, 应该怎么使�
 [examples/](examples/) 包含几个使用示例，以及一个接入 Qwen ASR 3.1 的[真实使用示例](examples/4.daily-use/)。
 
 安装、配置和使用详情见 [DETAILS.md](DETAILS.md)。
+
+预编译程序见 [Releases](https://github.com/ctxinf/xiaomi-remote-2pro-minimal/releases)；发布方式与系统要求见 [自动发布](docs/releases.md)。

@@ -1,0 +1,74 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - '*'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal --no-self-update
+      - name: Test
+        run: |
+          cargo +stable test --locked
+          python3 -m unittest discover -s tests -p 'test_*.py'
+      - name: Build
+        run: cargo +stable build --release --locked --target '${{ matrix.target }}'
+      - name: Package
+        env:
+          TARGET: ${{ matrix.target }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          archive="xiaomi-remote-2pro-minimal-${TAG}-${TARGET}"
+          mkdir -p "dist/${archive}"
+          cp "target/${TARGET}/release/xiaomi-remote-2pro-minimal" "dist/${archive}/"
+          cp config.example.jsonc README.md DETAILS.md "dist/${archive}/"
+          cp -r docs "dist/${archive}/"
+          tar -C dist -czf "dist/${archive}.tar.gz" "${archive}"
+          rm -r "dist/${archive}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Generate checksums
+        working-directory: dist
+        run: sha256sum *.tar.gz > SHA256SUMS
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" dist/* --verify-tag --generate-notes --title "$TAG"
