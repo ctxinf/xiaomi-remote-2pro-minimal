@@ -13,13 +13,13 @@ use std::path::PathBuf;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
-use xiaomi_remote_pro2_gateway::atvv;
-use xiaomi_remote_pro2_gateway::ble_bridge::{self, BridgeConfig};
-use xiaomi_remote_pro2_gateway::bluest::Adapter;
-use xiaomi_remote_pro2_gateway::hooks::{HookConfig, HookEvent};
-use xiaomi_remote_pro2_gateway::recorder::{default_tmp_dir, WavRecorder};
-use xiaomi_remote_pro2_gateway::retention::RetentionPolicy;
-use xiaomi_remote_pro2_gateway::voice_key;
+use xiaomi_remote_2pro_minimal::atvv;
+use xiaomi_remote_2pro_minimal::ble_bridge::{self, BridgeConfig};
+use xiaomi_remote_2pro_minimal::bluest::Adapter;
+use xiaomi_remote_2pro_minimal::hooks::{HookConfig, HookEvent};
+use xiaomi_remote_2pro_minimal::recorder::{default_tmp_dir, WavRecorder};
+use xiaomi_remote_2pro_minimal::retention::RetentionPolicy;
+use xiaomi_remote_2pro_minimal::voice_key;
 
 /// env_logger serializes writes, keeping terminal and file records together.
 struct LogOutput(std::fs::File);
@@ -41,7 +41,7 @@ impl std::io::Write for LogOutput {
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "xiaomi-remote-gateway",
+    name = "xiaomi-remote-2pro-minimal",
     version,
     about = "Xiaomi Bluetooth Remote 2 Pro (RC003/ARN9) Voice Gateway: records mic audio and triggers hooks"
 )]
@@ -151,7 +151,7 @@ async fn main() -> anyhow::Result<()> {
     let matches = Cli::command().get_matches();
     let mut cli = Cli::from_arg_matches(&matches)?;
     if let Some(path) = cli.config.clone() {
-        let value = xiaomi_remote_pro2_gateway::config::read(&path)?;
+        let value = xiaomi_remote_2pro_minimal::config::read(&path)?;
         let object = value
             .as_object()
             .context("Gateway configuration must be an object")?;
@@ -227,7 +227,7 @@ async fn main() -> anyhow::Result<()> {
     logger
         .filter_level(log::LevelFilter::Warn)
         .filter_module(
-            "xiaomi_remote_pro2_gateway",
+            "xiaomi_remote_2pro_minimal",
             if cli.verbose {
                 log::LevelFilter::Trace
             } else {
@@ -267,7 +267,7 @@ fn build_hooks(cli: &Cli) -> anyhow::Result<HookConfig> {
         None => HookConfig::new(),
     };
     if let Some(path) = &cli.config {
-        let value = xiaomi_remote_pro2_gateway::config::read(path)?;
+        let value = xiaomi_remote_2pro_minimal::config::read(path)?;
         if value.get("hooks").is_some() {
             hooks.merge(HookConfig::from_file(path)?);
         }

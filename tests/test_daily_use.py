@@ -132,7 +132,7 @@ class DailyUseTests(unittest.TestCase):
     def test_install_update_preserves_configuration(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            binary = root / 'target/release/xiaomi-remote-pro2-gateway'
+            binary = root / 'target/release/xiaomi-remote-2pro-minimal'
             binary.parent.mkdir(parents=True)
             binary.write_text('fake binary')
             data = root / 'installed data'

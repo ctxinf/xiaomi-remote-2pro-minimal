@@ -1,11 +1,11 @@
 use std::sync::OnceLock;
-use xiaomi_remote_pro2_gateway::adpcm::ImaAdpcmDecoder;
-use xiaomi_remote_pro2_gateway::atvv::{Caps, ControlEvent};
-use xiaomi_remote_pro2_gateway::dsp::{calculate_metrics, FrameAccumulator};
-use xiaomi_remote_pro2_gateway::hooks::{HookConfig, HookEvent};
-use xiaomi_remote_pro2_gateway::recorder::{AudioSink, WavRecorder};
-use xiaomi_remote_pro2_gateway::retention::{sweep, RetentionPolicy};
-use xiaomi_remote_pro2_gateway::session::{Action, AtvvSession};
+use xiaomi_remote_2pro_minimal::adpcm::ImaAdpcmDecoder;
+use xiaomi_remote_2pro_minimal::atvv::{Caps, ControlEvent};
+use xiaomi_remote_2pro_minimal::dsp::{calculate_metrics, FrameAccumulator};
+use xiaomi_remote_2pro_minimal::hooks::{HookConfig, HookEvent};
+use xiaomi_remote_2pro_minimal::recorder::{AudioSink, WavRecorder};
+use xiaomi_remote_2pro_minimal::retention::{sweep, RetentionPolicy};
+use xiaomi_remote_2pro_minimal::session::{Action, AtvvSession};
 
 #[test]
 fn test_atvv_caps_parsing() {

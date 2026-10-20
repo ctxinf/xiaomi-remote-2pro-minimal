@@ -20,7 +20,7 @@ def systemctl(*args, check=True):
 
 
 def locations():
-    print(f'Service：{UNIT}\n程序：{DATA / "bin/xiaomi-remote-pro2-gateway"}\n'
+    print(f'Service：{UNIT}\n程序：{DATA / "bin/xiaomi-remote-2pro-minimal"}\n'
           f'网关配置：{DATA / "config.jsonc"}\nHooks 程序：{DATA / "hooks"}\n'
           f'Hook 配置：{DATA / "hooks/hooks-config.jsonc"}\n'
           f'凭据管理：{DATA / "hooks/credential-manage.py"}')
@@ -46,7 +46,7 @@ def quote(path):
 def install(build):
     if build:
         subprocess.run(['cargo', 'build', '--release', '--manifest-path', str(ROOT / 'Cargo.toml')], check=True)
-    binary = ROOT / 'target/release/xiaomi-remote-pro2-gateway'
+    binary = ROOT / 'target/release/xiaomi-remote-2pro-minimal'
     if not binary.is_file():
         raise ValueError('找不到 release 二进制，请先 cargo build --release')
     copy_file(binary, DATA / 'bin' / binary.name)

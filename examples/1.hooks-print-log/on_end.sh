@@ -12,7 +12,7 @@
 #
 # Usage:
 #   chmod +x examples/1.hooks-print-log/on_end.sh
-#   xiaomi-remote-pro2-gateway --hook end=./examples/1.hooks-print-log/on_end.sh
+#   xiaomi-remote-2pro-minimal --hook end=./examples/1.hooks-print-log/on_end.sh
 
 set -eu
 

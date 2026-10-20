@@ -6,7 +6,7 @@
 #
 # Usage:
 #   chmod +x examples/1.hooks-print-log/on_start.sh
-#   xiaomi-remote-pro2-gateway --hook start=./examples/1.hooks-print-log/on_start.sh
+#   xiaomi-remote-2pro-minimal --hook start=./examples/1.hooks-print-log/on_start.sh
 
 set -eu
 

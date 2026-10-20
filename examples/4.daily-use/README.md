@@ -4,7 +4,7 @@
 # 本地初始化 hooks 配置并隐藏输入 API Key
 python3 examples/4.daily-use/hooks/credential-manage.py init
 python3 examples/4.daily-use/hooks/credential-manage.py set
-./target/release/xiaomi-remote-pro2-gateway --config examples/4.daily-use/config.jsonc
+./target/release/xiaomi-remote-2pro-minimal --config examples/4.daily-use/config.jsonc
 
 # 安装为用户级 systemd service（自动构建 release）
 examples/4.daily-use/install-service.sh install

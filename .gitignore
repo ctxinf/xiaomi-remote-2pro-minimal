@@ -15,7 +15,7 @@ __pycache__/
 *.log
 # Public example instructions
 !examples/*/README.md
-
+!DETAILS.md
 # Daily-use hook configuration and encrypted local credentials
 /examples/4.daily-use/hooks/hooks-config.jsonc
 /examples/4.daily-use/hooks/credentials.enc
